@@ -35,7 +35,7 @@ export function EmptyState({ icon, title, description }: EmptyStateProps) {
 const styles = StyleSheet.create({
   container:   { alignItems: 'center', justifyContent: 'center', paddingVertical: 60, paddingHorizontal: 40 },
   icon:        { marginBottom: 16 },
-  emoji:       { fontSize: 48, marginBottom: 16 },
-  title:       { fontSize: 18, textAlign: 'center', marginBottom: 10 },
-  description: { fontSize: 14, textAlign: 'center', lineHeight: 22 },
+  emoji:       { fontSize: 50, marginBottom: 16 },
+  title:       { fontSize: 20, textAlign: 'center', marginBottom: 10 },
+  description: { fontSize: 16, textAlign: 'center', lineHeight: 22 },
 });

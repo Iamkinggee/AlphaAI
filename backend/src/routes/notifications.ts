@@ -43,6 +43,27 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /notifications/push-token
+ * Registers the device's Expo push token.
+ */
+router.post('/push-token', async (req: Request, res: Response) => {
+  const userId = getUserId(req);
+  const { token, platform } = req.body;
+
+  if (!token) {
+    res.status(400).json({ success: false, error: 'Token is required' });
+    return;
+  }
+
+  console.log(`📲 [Notifications] Received push token${userId ? ` for user ${userId}` : ' (anonymous)'} on ${platform}`);
+
+  // TODO: Upsert the token into a `user_profiles` or `push_tokens` table in Supabase.
+  // For now, we return 200 OK to satisfy the frontend API contract.
+  
+  res.json({ success: true, message: 'Push token registered successfully' });
+});
+
+/**
  * PATCH /notifications/:id — Mark single read
  */
 router.patch('/:id', async (req: Request, res: Response) => {

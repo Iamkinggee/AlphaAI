@@ -22,31 +22,31 @@ export const Fonts = {
 } as const;
 
 export const FontSizes = {
-  xs: 10,
-  sm: 12,
-  md: 14,
-  lg: 16,
-  xl: 18,
-  '2xl': 20,
-  '3xl': 24,
-  '4xl': 28,
-  '5xl': 32,
-  '6xl': 40,
-  '7xl': 48,
+  xs: 12,
+  sm: 14,
+  md: 16,
+  lg: 18,
+  xl: 20,
+  '2xl': 22,
+  '3xl': 26,
+  '4xl': 30,
+  '5xl': 34,
+  '6xl': 42,
+  '7xl': 50,
 } as const;
 
 export const LineHeights = {
-  xs: 14,
-  sm: 16,
-  md: 20,
-  lg: 24,
-  xl: 26,
-  '2xl': 28,
-  '3xl': 32,
-  '4xl': 36,
-  '5xl': 40,
-  '6xl': 48,
-  '7xl': 56,
+  xs: 16,
+  sm: 18,
+  md: 22,
+  lg: 26,
+  xl: 28,
+  '2xl': 30,
+  '3xl': 34,
+  '4xl': 38,
+  '5xl': 42,
+  '6xl': 50,
+  '7xl': 58,
 } as const;
 
 export const LetterSpacing = {

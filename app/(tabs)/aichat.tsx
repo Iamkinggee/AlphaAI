@@ -2,7 +2,7 @@
  * AlphaAI — AI Chat Tab
  * Full AI analyst chat powered by ChatStore + Groq AI via backend.
  */
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable,
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -41,7 +41,10 @@ export default function AIChatScreen() {
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
   }, [input, isLoading, sendMessage]);
 
-  const visibleMessages = messages.filter((m) => m.role !== 'system');
+  const visibleMessages = useMemo(
+    () => messages.filter((m) => m.role !== 'system'),
+    [messages]
+  );
 
   return (
     <KeyboardAvoidingView
@@ -92,9 +95,9 @@ export default function AIChatScreen() {
               Ask me about any trading pair, Order Blocks, FVGs, or your active signals.
             </Animated.Text>
             <Animated.View entering={FadeInDown.delay(400).duration(600)} style={styles.quickPromptsGrid}>
-              {QUICK_PROMPTS.map((p, i) => (
+              {QUICK_PROMPTS.map((p) => (
                 <Pressable
-                  key={i}
+                  key={p}
                   onPress={() => handleSend(p)}
                   style={[styles.quickPrompt, { backgroundColor: theme.card, borderColor: theme.border }]}
                 >
@@ -108,7 +111,7 @@ export default function AIChatScreen() {
           const isUser = item.role === 'user';
           return (
             <Animated.View
-              entering={FadeInUp.delay(index * 20).duration(300)}
+              entering={FadeInUp.delay(index * 10).duration(200)}
               style={[styles.messageRow, isUser && styles.messageRowUser]}
             >
               {!isUser && (
@@ -190,26 +193,26 @@ const styles = StyleSheet.create({
   header:           { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   headerLeft:       { flexDirection: 'row', alignItems: 'center', gap: 12 },
   aiAvatar:         { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-  headerTitle:      { fontSize: 18 },
-  headerOnline:     { fontSize: 12, marginTop: 1 },
+  headerTitle:      { fontSize: 20 },
+  headerOnline:     { fontSize: 14, marginTop: 1 },
   newChatBtn:       { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   messagesList:     { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16, flexGrow: 1 },
   messageRow:       { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 12 },
   messageRowUser:   { flexDirection: 'row-reverse' },
   botAvatar:        { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   bubble:           { borderRadius: 16, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, maxWidth: '82%' },
-  bubbleText:       { fontSize: 15, lineHeight: 22 },
+  bubbleText:       { fontSize: 17, lineHeight: 22 },
   emptyState:       { alignItems: 'center', paddingTop: 60, paddingHorizontal: 24 },
   emptyIconCircle:  { width: 100, height: 100, borderRadius: 50, alignItems: 'center', justifyContent: 'center', borderWidth: 1, marginBottom: 24 },
-  emptyTitle:       { fontSize: 22, marginBottom: 10 },
-  emptySub:         { fontSize: 15, textAlign: 'center', lineHeight: 24, marginBottom: 32 },
+  emptyTitle:       { fontSize: 24, marginBottom: 10 },
+  emptySub:         { fontSize: 17, textAlign: 'center', lineHeight: 24, marginBottom: 32 },
   quickPromptsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
   quickPrompt:      { borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, maxWidth: '47%' },
-  quickPromptText:  { fontSize: 13, lineHeight: 18 },
+  quickPromptText:  { fontSize: 15, lineHeight: 18 },
   inlinePromptsRow: { paddingVertical: 8 },
   inlineChip:       { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 8 },
-  inlineChipText:   { fontSize: 13 },
+  inlineChipText:   { fontSize: 15 },
   inputBar:         { flexDirection: 'row', alignItems: 'flex-end', gap: 10, paddingHorizontal: 16, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
-  input:            { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, maxHeight: 120 },
+  input:            { flex: 1, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12, fontSize: 17, maxHeight: 120 },
   sendBtn:          { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
 });

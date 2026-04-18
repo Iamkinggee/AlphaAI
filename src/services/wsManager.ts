@@ -11,6 +11,8 @@ type WsEventType =
   | 'signal_active'
   | 'signal_tp_hit'
   | 'signal_stopped'
+  | 'setup_detected'
+  | 'universe_update'
   | 'scan_complete'
   | 'system';
 
@@ -33,6 +35,7 @@ class AlphaAIWebSocket {
   private subscribedPairs: string[] = [];
   private userId: string | null = null;
   private isConnected = false;
+  private isConnecting = false;
 
   constructor(url: string) {
     this.url = url;
@@ -40,18 +43,23 @@ class AlphaAIWebSocket {
 
   /** Connect to the backend WebSocket server. */
   connect(userId?: string): void {
-    if (this.isConnected) return;
+    if (this.isConnected || this.isConnecting) return;
     this.userId = userId ?? null;
     this._open();
   }
 
   private _open(): void {
+    if (this.isConnecting) return;
+    this.isConnecting = true;
+
     try {
+      console.log(`🔌 [WS Client] Connecting to ${this.url}/ws...`);
       this.ws = new WebSocket(this.url + '/ws');
 
       this.ws.onopen = () => {
-        console.log('🔌 [WS Client] Connected');
+        console.log('🔌 [WS Client] Connected successfully');
         this.isConnected = true;
+        this.isConnecting = false;
         this.retries = 0;
 
         // Authenticate and re-subscribe
@@ -62,7 +70,8 @@ class AlphaAIWebSocket {
           this._send({ action: 'subscribe', pairs: this.subscribedPairs });
         }
 
-        // Start ping to keep connection alive
+        // Start ping as a heartbeat fallback for mobile networks
+        this._clearPing();
         this.pingInterval = setInterval(() => {
           this._send({ action: 'ping' });
         }, 15_000);
@@ -76,18 +85,30 @@ class AlphaAIWebSocket {
         } catch { /* ignore malformed events */ }
       };
 
-      this.ws.onclose = () => {
-        console.log('🔌 [WS Client] Disconnected');
+      this.ws.onclose = (e) => {
+        const wasConnected = this.isConnected;
         this.isConnected = false;
+        this.isConnecting = false;
         this._clearPing();
+        
+        if (wasConnected) {
+          console.log(`🔌 [WS Client] Disconnected (Code: ${e.code}, Reason: ${e.reason || 'none'})`);
+        }
         this._scheduleReconnect();
       };
 
-      this.ws.onerror = (err) => {
-        console.warn('[WS Client] Error:', err);
+      this.ws.onerror = (err: any) => {
+        this.isConnecting = false;
+        // In React Native, err might be an object with limited properties
+        console.warn('[WS Client] Socket error details:', {
+          message: err.message,
+          readyState: this.ws?.readyState,
+          url: this.ws?.url
+        });
       };
     } catch (err) {
-      console.warn('[WS Client] Failed to open:', err);
+      this.isConnecting = false;
+      console.warn('[WS Client] Failed to open socket:', err);
       this._scheduleReconnect();
     }
   }

@@ -41,25 +41,47 @@ async function request<T>(
   const url = `${API.BASE_URL}${endpoint}`;
   const headers = await getHeaders();
 
-  const response = await fetch(url, {
-    ...options,
-    headers: { ...headers, ...(options?.headers ?? {}) },
-  });
+  // 15-second timeout to handle slow mobile connections without failing instantly
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15_000);
 
-  if (!response.ok) {
-    let body: unknown;
-    try { body = await response.json(); } catch {}
-    throw new ApiError(
-      response.status,
-      `API Error ${response.status}: ${response.statusText}`,
-      body
-    );
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: { ...headers, ...(options?.headers ?? {}) },
+      // @ts-ignore - signal is supported in modern fetch
+      signal: options?.signal ?? controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let body: unknown;
+      try { body = await response.json(); } catch {}
+      
+      // Special handling for 401 — not a "backend failure", but a logic failure (auth)
+      if (response.status === 401) {
+        throw new ApiError(401, 'Unauthorized', body);
+      }
+
+      throw new ApiError(
+        response.status,
+        `API Error ${response.status}: ${response.statusText}`,
+        body
+      );
+    }
+
+    // Handle 204 No Content
+    if (response.status === 204) return undefined as T;
+
+    return response.json() as Promise<T>;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out. Please check your connection.');
+    }
+    throw err;
   }
-
-  // Handle 204 No Content
-  if (response.status === 204) return undefined as T;
-
-  return response.json() as Promise<T>;
 }
 
 export const apiClient = {

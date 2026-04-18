@@ -88,14 +88,22 @@ function ResultRow({ pair, dir, result, pnl, color }: { pair: string; dir: strin
   );
 }
 
-// ── Mock performance data ─────────────────────────────────────────────
-const RECENT_RESULTS = [
-  { pair: 'BTC/USDT', dir: 'LONG · 4H', result: 'TP2 Hit', pnl: '+4.8%', color: '#00F0A0' },
-  { pair: 'ETH/USDT', dir: 'SHORT · 1H', result: 'TP1 Hit', pnl: '+2.1%', color: '#00F0A0' },
-  { pair: 'SOL/USDT', dir: 'LONG · 4H', result: 'Stopped', pnl: '-0.9%', color: '#FF3366' },
-  { pair: 'BNB/USDT', dir: 'LONG · 4H', result: 'TP3 Hit', pnl: '+7.2%', color: '#00F0A0' },
-  { pair: 'LINK/USDT', dir: 'SHORT · 1H', result: 'Expired', pnl: '0%', color: '#5A6B8A' },
-];
+// ── Helpers ────────────────────────────────────────────────────────────
+function statusColor(status: string, bullish: string, bearish: string, dim: string) {
+  if (status === 'TP1_hit' || status === 'TP2_hit' || status === 'TP3_hit') return bullish;
+  if (status === 'stopped') return bearish;
+  return dim;
+}
+
+function statusLabel(status: string) {
+  if (status === 'TP1_hit') return 'TP1 Hit';
+  if (status === 'TP2_hit') return 'TP2 Hit';
+  if (status === 'TP3_hit') return 'TP3 Hit';
+  if (status === 'stopped') return 'Stopped';
+  if (status === 'active')  return 'Active';
+  if (status === 'expired') return 'Expired';
+  return 'Pending';
+}
 
 export default function DashboardScreen() {
   const { theme } = useTheme();
@@ -107,15 +115,52 @@ export default function DashboardScreen() {
   const { pulse } = useMarket();
   const { unreadCount } = useNotifications();
 
+  // ── Derive recent results from live signals ─────────────────────
+  const recentResults = useMemo(() => {
+    const resolved = signals
+      .filter(s => ['TP1_hit','TP2_hit','TP3_hit','stopped','expired'].includes(s.status))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 5);
+    return resolved;
+  }, [signals]);
+
+  const activeResults = useMemo(() => {
+    return signals
+      .filter(s => s.status === 'active' || s.status === 'approaching')
+      .sort((a, b) => (b.score - a.score))
+      .slice(0, 3);
+  }, [signals]);
+
   // ── Analytics from live signals ─────────────────────────────────────
   const stats = useMemo(() => {
-    const total     = signals.length;
-    const wins      = signals.filter(s => s.status === 'TP1_hit' || s.status === 'TP2_hit' || s.status === 'TP3_hit').length;
-    const losses    = signals.filter(s => s.status === 'stopped').length;
-    const resolved  = wins + losses;
-    const winRate   = resolved > 0 ? Math.round((wins / resolved) * 100) : 72; // fallback to 72% for demo
+    const total    = signals.length;
+    const wins     = signals.filter(s => s.status === 'TP1_hit' || s.status === 'TP2_hit' || s.status === 'TP3_hit').length;
+    const losses   = signals.filter(s => s.status === 'stopped').length;
+    const resolved = wins + losses;
+    const winRate  = resolved > 0 ? Math.round((wins / resolved) * 100) : 0;
     return { total, wins, losses, winRate, approaching: approaching.length, active: active.length };
   }, [signals, approaching, active]);
+
+  // ── Weekly P&L from resolved signals ──────────────────────────────────
+  const weeklyPnl = useMemo(() => {
+    // Group resolved signals into 7-day buckets (last 7 weeks)
+    const buckets = new Array(7).fill(0);
+    const now = Date.now();
+    const WEEK = 7 * 24 * 3600 * 1000;
+    signals
+      .filter(s => s.currentPnl !== undefined && s.status !== 'active' && s.status !== 'approaching')
+      .forEach(s => {
+        const age = now - new Date(s.createdAt).getTime();
+        const weekIdx = Math.min(6, Math.floor(age / WEEK));
+        buckets[6 - weekIdx] += s.currentPnl ?? 0;
+      });
+    return buckets;
+  }, [signals]);
+
+  const mtdPnl = useMemo(() => {
+    const total = weeklyPnl.reduce((a, b) => a + b, 0);
+    return total !== 0 ? `${total >= 0 ? '+' : ''}${total.toFixed(1)}% MTD` : null;
+  }, [weeklyPnl]);
 
   const donutSlices: DonutSlice[] = [
     { value: stats.wins,       color: theme.bullish,    label: 'Wins'      },
@@ -177,8 +222,8 @@ export default function DashboardScreen() {
         {/* ── Stat cards row ───────────────────────────────────────── */}
         <View style={styles.statsRow}>
           <StatCard label="Win Rate" value={`${stats.winRate}%`} icon="trending-up" color={theme.bullish} sub="All time" delay={150} />
-          <StatCard label="Total Signals" value={String(Math.max(stats.total, 47))} icon="flash" color={theme.accentPrimary} sub="This month" delay={200} />
-          <StatCard label="Stopped" value={String(Math.max(stats.losses, 3))} icon="close-circle" color={theme.bearish} delay={250} />
+          <StatCard label="Total Signals" value={String(stats.total)} icon="flash" color={theme.accentPrimary} sub="This month" delay={200} />
+          <StatCard label="Stopped" value={String(stats.losses)} icon="close-circle" color={theme.bearish} delay={250} />
         </View>
 
         {/* ── Signal breakdown + donut ─────────────────────────────── */}
@@ -189,9 +234,9 @@ export default function DashboardScreen() {
             <DonutChart slices={donutSlices} size={110} thickness={16} />
             <View style={styles.legend}>
               {[
-                { label: 'Wins',      value: Math.max(stats.wins, 34),   color: theme.bullish },
-                { label: 'Losses',    value: Math.max(stats.losses, 10),  color: theme.bearish },
-                { label: 'Approaching',value: stats.approaching,           color: theme.approaching },
+                { label: 'Wins',      value: stats.wins,        color: theme.bullish },
+                { label: 'Losses',    value: stats.losses,       color: theme.bearish },
+                { label: 'Approaching',value: stats.approaching,  color: theme.approaching },
                 { label: 'Pending',   value: Math.max(0, stats.total - stats.wins - stats.losses - stats.approaching), color: theme.textTertiary },
               ].map((r) => (
                 <View key={r.label} style={styles.legendItem}>
@@ -204,27 +249,38 @@ export default function DashboardScreen() {
           </View>
         </Animated.View>
 
-        {/* ── P&L bar chart (monthly estimates) ───────────────────── */}
+        {/* ── P&L bar chart (live — from resolved signals) ───────────── */}
         <Animated.View entering={FadeInDown.delay(350).duration(400)}
           style={[styles.section, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <View style={styles.sectionRow}>
-            <Text style={[styles.sectionTitle, { color: theme.textPrimary, fontFamily: 'Inter-SemiBold' }]}>Estimated P&L</Text>
-            <Text style={[styles.sectionSub, { color: theme.bullish, fontFamily: 'Inter-SemiBold' }]}>+14.2% MTD</Text>
+            <Text style={[styles.sectionTitle, { color: theme.textPrimary, fontFamily: 'Inter-SemiBold' }]}>Signal P&L</Text>
+            {mtdPnl && (
+              <Text style={[styles.sectionSub, { color: weeklyPnl.reduce((a,b)=>a+b,0) >= 0 ? theme.bullish : theme.bearish, fontFamily: 'Inter-SemiBold' }]}>
+                {mtdPnl}
+              </Text>
+            )}
           </View>
-          <View style={styles.barChart}>
-            {[4.1, -1.2, 6.8, 2.3, -0.4, 3.9, 6.2].map((v, i) => {
-              const isPos = v >= 0;
-              const h = Math.abs(v) * 8;
-              return (
-                <View key={i} style={styles.barCol}>
-                  <View style={[styles.bar, { height: h, backgroundColor: isPos ? theme.bullish : theme.bearish, opacity: 0.85, borderRadius: 3 }]} />
-                  <Text style={[styles.barLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
-                    {['W1','W2','W3','W4','W5','W6','W7'][i]}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
+          {weeklyPnl.every(v => v === 0) ? (
+            <Text style={[{ color: theme.textTertiary, fontFamily: 'Inter-Regular', fontSize: 14, textAlign: 'center', paddingVertical: 16 }]}>
+              P&L data will appear once signals resolve
+            </Text>
+          ) : (
+            <View style={styles.barChart}>
+              {weeklyPnl.map((v, i) => {
+                const isPos = v >= 0;
+                const maxAbs = Math.max(...weeklyPnl.map(Math.abs), 1);
+                const h = Math.max(4, (Math.abs(v) / maxAbs) * 52);
+                return (
+                  <View key={i} style={styles.barCol}>
+                    <View style={[styles.bar, { height: h, backgroundColor: isPos ? theme.bullish : theme.bearish, opacity: 0.85, borderRadius: 3 }]} />
+                    <Text style={[styles.barLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+                      {['W1','W2','W3','W4','W5','W6','W7'][i]}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </Animated.View>
 
         {/* ── Recent signal results ────────────────────────────────── */}
@@ -236,9 +292,26 @@ export default function DashboardScreen() {
               <Text style={[styles.viewAll, { color: theme.accentPrimary, fontFamily: 'Inter-Medium' }]}>View All</Text>
             </Pressable>
           </View>
-          {RECENT_RESULTS.map((r, i) => (
-            <ResultRow key={i} {...r} />
-          ))}
+          {recentResults.length === 0 ? (
+            <Text style={[{ color: theme.textTertiary, fontFamily: 'Inter-Regular', fontSize: 15, textAlign: 'center', paddingVertical: 12 }]}>
+              {isLoading ? 'Loading signals…' : 'No resolved signals yet — pipeline is scanning'}
+            </Text>
+          ) : (
+            recentResults.map((s) => {
+              const col = statusColor(s.status, theme.bullish, theme.bearish, theme.textTertiary);
+              const pnl = s.currentPnlFormatted ?? '—';
+              return (
+                <ResultRow
+                  key={s.id}
+                  pair={s.pair}
+                  dir={`${s.direction} · ${s.timeframe}`}
+                  result={statusLabel(s.status)}
+                  pnl={pnl}
+                  color={col}
+                />
+              );
+            })
+          )}
         </Animated.View>
 
         {/* ── Approaching now ─────────────────────────────────────── */}
@@ -259,7 +332,7 @@ export default function DashboardScreen() {
                   <Text style={[styles.resultPair, { color: theme.textPrimary, fontFamily: 'Inter-SemiBold' }]}>{s.pair}</Text>
                   <Text style={[styles.resultDir, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>{s.direction} · {s.timeframe} · Score {s.score}</Text>
                 </View>
-                <Text style={[{ color: theme.approaching, fontFamily: 'Inter-Medium', fontSize: 12 }]}>{s.distanceFormatted}</Text>
+                <Text style={[{ color: theme.approaching, fontFamily: 'Inter-Medium', fontSize: 14 }]}>{s.distanceFormatted}</Text>
                 <Ionicons name="chevron-forward" size={14} color={theme.textTertiary} />
               </Pressable>
             ))}
@@ -290,53 +363,53 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   container:     { flex: 1 },
   header:        { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 20, paddingBottom: 16 },
-  greetingSmall: { fontSize: 13, marginBottom: 2 },
-  greetingName:  { fontSize: 26 },
-  date:          { fontSize: 12, marginTop: 2 },
+  greetingSmall: { fontSize: 15, marginBottom: 2 },
+  greetingName:  { fontSize: 28 },
+  date:          { fontSize: 14, marginTop: 2 },
   notifBtn:      { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
   badge:         { position: 'absolute', top: -2, right: -2, width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  badgeText:     { fontSize: 9, color: '#fff', fontFamily: 'Inter-Bold' },
+  badgeText:     { fontSize: 11, color: '#fff', fontFamily: 'Inter-Bold' },
   pulseStrip:    { flexDirection: 'row', marginHorizontal: 20, borderRadius: 14, borderWidth: 1, marginBottom: 20 },
   pulseItem:     { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  pulseLabel:    { fontSize: 10, marginBottom: 4 },
-  pulseValue:    { fontSize: 14 },
+  pulseLabel:    { fontSize: 12, marginBottom: 4 },
+  pulseValue:    { fontSize: 16 },
   statsRow:      { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 16 },
   statCard:      { flex: 1, borderRadius: 14, borderWidth: 1, padding: 12, alignItems: 'center', gap: 4 },
   statIcon:      { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  statValue:     { fontSize: 20 },
-  statLabel:     { fontSize: 10, textAlign: 'center' },
-  statSub:       { fontSize: 10 },
+  statValue:     { fontSize: 22 },
+  statLabel:     { fontSize: 12, textAlign: 'center' },
+  statSub:       { fontSize: 12 },
   section:       { marginHorizontal: 20, borderRadius: 16, borderWidth: 1, padding: 16, marginBottom: 16 },
-  sectionTitle:  { fontSize: 16, marginBottom: 12 },
+  sectionTitle:  { fontSize: 18, marginBottom: 12 },
   sectionRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  sectionSub:    { fontSize: 13 },
-  viewAll:       { fontSize: 13 },
+  sectionSub:    { fontSize: 15 },
+  viewAll:       { fontSize: 15 },
   donutRow:      { flexDirection: 'row', alignItems: 'center', gap: 20 },
   legend:        { flex: 1, gap: 8 },
   legendItem:    { flexDirection: 'row', alignItems: 'center', gap: 8 },
   legendDot:     { width: 8, height: 8, borderRadius: 4 },
-  legendLabel:   { flex: 1, fontSize: 13 },
-  legendVal:     { fontSize: 13 },
+  legendLabel:   { flex: 1, fontSize: 15 },
+  legendVal:     { fontSize: 15 },
   barChart:      { flexDirection: 'row', alignItems: 'flex-end', height: 60, gap: 6 },
   barCol:        { flex: 1, alignItems: 'center', gap: 4, justifyContent: 'flex-end', height: 60 },
   bar:           {},
-  barLabel:      { fontSize: 9 },
+  barLabel:      { fontSize: 11 },
   resultRow:     { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   resultDot:     { width: 8, height: 8, borderRadius: 4 },
   resultInfo:    { flex: 1 },
-  resultPair:    { fontSize: 14 },
-  resultDir:     { fontSize: 12, marginTop: 1 },
+  resultPair:    { fontSize: 16 },
+  resultDir:     { fontSize: 14, marginTop: 1 },
   resultRight:   { alignItems: 'flex-end' },
-  resultLabel:   { fontSize: 13 },
-  resultPnl:     { fontSize: 12 },
+  resultLabel:   { fontSize: 15 },
+  resultPnl:     { fontSize: 14 },
   liveDot:       { width: 8, height: 8, borderRadius: 4 },
   approachingRow:{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   approachDot:   { width: 8, height: 8, borderRadius: 4 },
   quickRow:       { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginBottom: 8 },
   quickBtn:       { flex: 1, borderRadius: 14, borderWidth: 1, padding: 14, alignItems: 'center', gap: 6 },
-  quickLabel:     { fontSize: 11 },
+  quickLabel:     { fontSize: 13 },
   watchlistBtn:   { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, borderWidth: 1, padding: 16 },
   watchlistIconWrap: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  watchlistLabel: { fontSize: 15, marginBottom: 3 },
-  watchlistSub:   { fontSize: 12 },
+  watchlistLabel: { fontSize: 17, marginBottom: 3 },
+  watchlistSub:   { fontSize: 14 },
 });

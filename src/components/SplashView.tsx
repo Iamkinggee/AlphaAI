@@ -49,6 +49,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logoLetter: {
-    fontSize: 40,
+    fontSize: 42,
   },
 });

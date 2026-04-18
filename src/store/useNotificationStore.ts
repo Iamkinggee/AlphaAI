@@ -1,6 +1,14 @@
 /**
  * AlphaAI — Notification Store (Zustand)
- * Phase 5: Wired to /api/notifications.
+ * Manages in-app notification state.
+ * Supports both backend-fetched and real-time WebSocket notifications.
+ *
+ * Deduplication:
+ *  - Server-fetched notifications are stored by their real backend ID.
+ *  - Realtime notifications are keyed by `type:signalId` so a WS
+ *    reconnect never creates a second copy of the same event.
+ *  - Backend IDs are recorded in a Set; addRealtimeNotification skips
+ *    any event whose signalId+type is already present in the list.
  */
 import { create } from 'zustand';
 import { apiClient } from '@/src/services/apiClient';
@@ -33,19 +41,21 @@ interface NotificationStore {
   isLoading: boolean;
 
   fetchNotifications: () => Promise<void>;
+  addRealtimeNotification: (notif: Omit<AppNotification, 'id' | 'read' | 'createdAt'>) => void;
   markRead: (id: string) => void;
   markAsRead: (id: string) => void;
   markAllRead: () => void;
   clearAll: () => void;
 }
 
-const MOCK_NOTIFICATIONS: AppNotification[] = [
-  { id: 'n_001', type: 'approaching', priority: 'critical', title: 'BTC/USDT Approaching Zone', body: '0.8% away from 4H OB Demand — Score: 84', pair: 'BTC/USDT', signalId: 'sig_001', read: false, createdAt: new Date(Date.now() - 3 * 60 * 1000).toISOString() },
-  { id: 'n_002', type: 'approaching', priority: 'high', title: 'ETH/USDT Approaching Zone', body: '1.2% away from 1H OB + FVG — Score: 76', pair: 'ETH/USDT', signalId: 'sig_002', read: false, createdAt: new Date(Date.now() - 8 * 60 * 1000).toISOString() },
-  { id: 'n_003', type: 'active', priority: 'critical', title: 'SOL/USDT — Trade Active!', body: 'Price entered demand zone. Entry: $98.40 · SL: $96.30', pair: 'SOL/USDT', signalId: 'sig_003', read: false, createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() },
-  { id: 'n_004', type: 'tp_hit', priority: 'high', title: 'DOGE/USDT — TP1 Hit ✅', body: '+2.1% secured. Position partially closed at $0.1420.', pair: 'DOGE/USDT', signalId: 'sig_004', read: true, createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() },
-  { id: 'n_005', type: 'system', priority: 'standard', title: 'Signal Scan Complete', body: '24 pairs scanned · 2 approaching · 1 new signal detected', read: true, createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString() },
-];
+/**
+ * Build a stable dedup key for an in-app notification entry.
+ * Matches the key scheme used by notificationGuard so both layers stay in sync.
+ */
+function inAppKey(type: string, signalId?: string | null): string {
+  if (signalId) return `${type}:${signalId}`;
+  return `${type}:system`;
+}
 
 export const useNotificationStore = create<NotificationStore>((set, get) => ({
   notifications: [],
@@ -58,20 +68,71 @@ export const useNotificationStore = create<NotificationStore>((set, get) => ({
       const res = await apiClient.get<{ success: boolean; data: AppNotification[]; unreadCount: number }>(
         API.NOTIFICATIONS.LIST
       );
-      const notifications = res.data ?? MOCK_NOTIFICATIONS;
-      const unreadCount = res.unreadCount ?? notifications.filter((n) => !n.read).length;
-      set({ notifications, unreadCount, isLoading: false });
+      const fetched = res.data ?? [];
+      const unreadCount = res.unreadCount ?? fetched.filter((n) => !n.read).length;
+
+      // Merge: keep any unread realtime notifications that the backend
+      // doesn't know about yet (rt_ prefix), drop duplicates by signalId+type.
+      const serverIds = new Set(fetched.map((n) => n.id));
+      const existingRealtime = get().notifications.filter(
+        (n) => n.id.startsWith('rt_') && !serverIds.has(n.id)
+      );
+
+      // Build a dedup set of type:signalId keys already covered by server data
+      const serverKeys = new Set(fetched.map((n) => inAppKey(n.type, n.signalId)));
+
+      // Only keep realtime entries not already in server data
+      const filteredRealtime = existingRealtime.filter(
+        (n) => !serverKeys.has(inAppKey(n.type, n.signalId))
+      );
+
+      const merged = [...filteredRealtime, ...fetched];
+      const totalUnread = merged.filter((n) => !n.read).length;
+
+      set({ notifications: merged, unreadCount: totalUnread, isLoading: false });
     } catch {
-      console.warn('[NotificationStore] Backend unavailable — using mock notifications');
-      const unread = MOCK_NOTIFICATIONS.filter((n) => !n.read).length;
-      set({ notifications: MOCK_NOTIFICATIONS, unreadCount: unread, isLoading: false });
+      console.warn('[NotificationStore] Backend unavailable — keeping current state');
+      set({ isLoading: false });
     }
+  },
+
+  /**
+   * Add a notification from a real-time WebSocket event.
+   * Skips if a notification with the same type+signalId already exists,
+   * so WS reconnects never create duplicate entries.
+   */
+  addRealtimeNotification: (notif) => {
+    const key = inAppKey(notif.type, notif.signalId);
+    const existing = get().notifications;
+
+    // Deduplicate: skip if same type+signalId already in list
+    const alreadyExists = existing.some(
+      (n) => inAppKey(n.type, n.signalId) === key
+    );
+    if (alreadyExists) {
+      console.log(`[NotificationStore] Suppressed duplicate in-app notification: ${key}`);
+      return;
+    }
+
+    const newNotif: AppNotification = {
+      ...notif,
+      id: `rt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      notifications: [newNotif, ...state.notifications],
+      unreadCount: state.unreadCount + 1,
+    }));
   },
 
   markRead: (id) => {
     const notifications = get().notifications.map((n) => n.id === id ? { ...n, read: true } : n);
     set({ notifications, unreadCount: notifications.filter((n) => !n.read).length });
-    apiClient.patch(API.NOTIFICATIONS.MARK_READ(id), {}).catch(() => {});
+    // Only send to backend for server-generated IDs (not rt_ prefixed)
+    if (!id.startsWith('rt_')) {
+      apiClient.patch(API.NOTIFICATIONS.MARK_READ(id), {}).catch(() => {});
+    }
   },
 
   markAsRead: (id) => get().markRead(id),

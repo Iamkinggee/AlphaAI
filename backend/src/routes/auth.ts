@@ -1,13 +1,15 @@
 /**
  * AlphaAI Backend — /auth routes
- * POST /auth/sign-up   — Create new user account
- * POST /auth/sign-in   — Sign in with email/password
- * POST /auth/sign-out  — Invalidate session
- * POST /auth/refresh   — Refresh access token
- * GET  /auth/me        — Get current user profile
+ * POST /auth/sign-up         — Create new user account
+ * POST /auth/sign-in         — Sign in with email/password
+ * POST /auth/sign-out        — Invalidate session
+ * POST /auth/refresh         — Refresh access token
+ * GET  /auth/me              — Get current user profile
+ * GET  /auth/google/url      — Get Google OAuth URL (Supabase OAuth)
  */
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
+import { config } from '../config';
 
 const router = Router();
 
@@ -138,6 +140,39 @@ router.get('/me', async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ success: false, error: message });
   }
+});
+
+/**
+ * GET /auth/google/url
+ * Returns the Supabase Google OAuth URL for the frontend to open in a browser.
+ * Query param: redirectUri — the deep link URI the app listens on after auth.
+ *
+ * For this to work, you must:
+ *  1. Enable Google provider in Supabase Dashboard → Authentication → Providers
+ *  2. Add your Google OAuth client ID & secret from Google Cloud Console
+ *  3. Add your app's redirect URI to the Supabase "Redirect URLs" allow-list
+ *     e.g. alphaai://auth/callback
+ */
+router.get('/google/url', (req: Request, res: Response) => {
+  const supabaseUrl = config.SUPABASE_URL;
+
+  if (!supabaseUrl) {
+    res.status(503).json({
+      success: false,
+      error: 'Google Sign-In is not configured on this server.',
+    });
+    return;
+  }
+
+  const redirectUri = (req.query.redirectUri as string) || 'alphaai://auth/callback';
+
+  // Supabase OAuth URL — opens Google login in browser and redirects back to app
+  const url =
+    `${supabaseUrl}/auth/v1/authorize` +
+    `?provider=google` +
+    `&redirect_to=${encodeURIComponent(redirectUri)}`;
+
+  res.json({ success: true, data: { url } });
 });
 
 export default router;

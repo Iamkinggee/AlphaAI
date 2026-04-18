@@ -31,31 +31,87 @@ export function getRedisClient(): Redis {
 }
 
 /**
+ * Wait for Redis to be fully connected and ready.
+ * Resolves immediately if already connected.
+ */
+export async function waitForRedis(): Promise<void> {
+  const redis = getRedisClient();
+  // Mock client doesn't have status, so it's always "ready"
+  if (!redis.status || redis.status === 'ready') return;
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.warn('⚠️  Redis connection timed out — proceeding with detection engine using local state...');
+      resolve();
+    }, 3000);
+
+    redis.once('ready', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    redis.once('error', (err) => {
+      console.warn('⚠️  Redis connection error during startup — proceeding anyway:', err.message);
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
+/**
  * Structural Map Helpers
- * All data is stored as JSON strings in Redis hashes keyed by pair.
- * e.g. `structure:BTC/USDT` → { swings: [...], orderBlocks: [...], ... }
+ * Keys: `structure:BTC/USDT:1H`, `structure:BTC/USDT:4H`, etc.
  */
 export const structuralMap = {
-  async get(pair: string): Promise<Record<string, unknown> | null> {
+  async get(pair: string, timeframe?: string): Promise<Record<string, unknown> | null> {
     const redis = getRedisClient();
-    const raw = await redis.get(`structure:${pair}`);
+    const key = timeframe ? `structure:${pair}:${timeframe}` : `structure:${pair}`;
+    const raw = await redis.get(key);
     return raw ? JSON.parse(raw) : null;
   },
 
-  async set(pair: string, data: Record<string, unknown>, ttlSeconds = 3600): Promise<void> {
+  async set(pair: string, data: Record<string, unknown>, ttlSeconds = 3600, timeframe?: string): Promise<void> {
     const redis = getRedisClient();
-    await redis.set(`structure:${pair}`, JSON.stringify(data), 'EX', ttlSeconds);
+    // Use timeframe-specific key from data if not provided
+    const tf = timeframe ?? (data.timeframe as string) ?? 'unknown';
+    const key = `structure:${pair}:${tf}`;
+    await redis.set(key, JSON.stringify(data), 'EX', ttlSeconds);
   },
 
-  async delete(pair: string): Promise<void> {
+  async getAllForPair(pair: string): Promise<Record<string, unknown>[]> {
     const redis = getRedisClient();
-    await redis.del(`structure:${pair}`);
+    const keys = await redis.keys(`structure:${pair}:*`);
+    const results: Record<string, unknown>[] = [];
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      if (raw) {
+        try { results.push(JSON.parse(raw)); } catch { /* skip malformed */ }
+      }
+    }
+    return results;
+  },
+
+  async delete(pair: string, timeframe?: string): Promise<void> {
+    const redis = getRedisClient();
+    if (timeframe) {
+      await redis.del(`structure:${pair}:${timeframe}`);
+    } else {
+      const keys = await redis.keys(`structure:${pair}:*`);
+      if (keys.length > 0) await redis.del(...keys);
+    }
   },
 
   async getAllPairs(): Promise<string[]> {
     const redis = getRedisClient();
     const keys = await redis.keys('structure:*');
-    return keys.map((k) => k.replace('structure:', ''));
+    // Extract unique pair names from `structure:PAIR:TF` format
+    const pairs = new Set<string>();
+    keys.forEach(k => {
+      const parts = k.replace('structure:', '').split(':');
+      if (parts.length >= 2) pairs.add(parts.slice(0, -1).join(':'));
+      else pairs.add(parts[0]);
+    });
+    return Array.from(pairs);
   },
 };
 

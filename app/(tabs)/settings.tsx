@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Switch,
   Pressable, Alert, TouchableOpacity,
@@ -8,8 +8,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/src/contexts/ThemeContext';
+import { useAuthStore } from '@/src/store/useAuthStore';
 import { useAuth } from '@/src/hooks';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -55,14 +55,29 @@ function SettingRow({
 
 export default function SettingsScreen() {
   const { theme, isDark, toggleTheme } = useTheme();
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const router  = useRouter();
+  const insets  = useSafeAreaInsets();
   const { user, signOut } = useAuth();
 
-  const [notifs, setNotifs]         = useState(true);
-  const [pushSignals, setPushSignals] = useState(true);
-  const [pushTp, setPushTp]         = useState(true);
-  const [biometric, setBiometric]   = useState(false);
+  // ── Notification settings wired directly to the auth store ──────────
+  // This is the single source of truth — pushNotifications.ts reads from
+  // the same store before firing any local notification.
+  const notifications  = useAuthStore((s) => s.settings.notifications);
+  const updateSettings = useAuthStore((s) => s.updateSettings);
+
+  const setNotifPref = useCallback(
+    (key: keyof typeof notifications, val: boolean) => {
+      updateSettings({ notifications: { ...notifications, [key]: val } });
+    },
+    [notifications, updateSettings]
+  );
+
+  // Master toggle: disabling push turns off all sub-toggles visually
+  const pushEnabled   = notifications.pushEnabled;
+  const approaching   = notifications.approaching && pushEnabled;
+  const active        = notifications.active && pushEnabled;
+  const tpHit         = notifications.tpHit && pushEnabled;
+  const stopped       = notifications.stopped && pushEnabled;
 
   const handleSignOut = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -78,7 +93,8 @@ export default function SettingsScreen() {
     ]);
   }, [signOut, router]);
 
-  const displayName = user?.name
+  const displayName = user?.displayName
+    ?? user?.name
     ?? user?.email?.split('@')[0]?.replace(/[._-]/g, ' ')
     ?? 'Trader';
 
@@ -132,9 +148,50 @@ export default function SettingsScreen() {
         <Animated.View entering={FadeInDown.delay(200).duration(400)} style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.textTertiary, fontFamily: 'Inter-SemiBold' }]}>NOTIFICATIONS</Text>
           <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <SettingRow icon="notifications" label="Push Notifications" value={notifs} onToggle={(v) => { setNotifs(v); AsyncStorage.setItem('@alphaai/notifs', String(v)); }} />
-            <SettingRow icon="flash" label="Signal Alerts" sublabel="Approaching & active signals" value={pushSignals} onToggle={(v) => { setPushSignals(v); AsyncStorage.setItem('@alphaai/push_signals', String(v)); }} />
-            <SettingRow icon="checkmark-circle" label="Take Profit Alerts" sublabel="TP1, TP2, TP3 hits" value={pushTp} onToggle={(v) => { setPushTp(v); AsyncStorage.setItem('@alphaai/push_tp', String(v)); }} />
+
+            {/* Master push toggle */}
+            <SettingRow
+              icon="notifications"
+              label="Push Notifications"
+              sublabel={pushEnabled ? 'Receiving all alerts' : 'All notifications silenced'}
+              value={pushEnabled}
+              onToggle={(v) => setNotifPref('pushEnabled', v)}
+            />
+
+            {/* Sub-toggles — dimmed when master is off */}
+            <View style={{ opacity: pushEnabled ? 1 : 0.4 }}>
+              <SettingRow
+                icon="flash"
+                label="Signal Alerts"
+                sublabel="Approaching & active entries"
+                value={approaching}
+                onToggle={(v) => {
+                  if (!pushEnabled) return;
+                  setNotifPref('approaching', v);
+                  setNotifPref('active', v);
+                }}
+              />
+              <SettingRow
+                icon="checkmark-circle"
+                label="Take Profit Alerts"
+                sublabel="TP1, TP2, TP3 hits"
+                value={tpHit}
+                onToggle={(v) => {
+                  if (!pushEnabled) return;
+                  setNotifPref('tpHit', v);
+                }}
+              />
+              <SettingRow
+                icon="close-circle"
+                label="Stop Loss Alerts"
+                sublabel="When stop loss is triggered"
+                value={stopped}
+                onToggle={(v) => {
+                  if (!pushEnabled) return;
+                  setNotifPref('stopped', v);
+                }}
+              />
+            </View>
           </View>
         </Animated.View>
 
@@ -142,8 +199,13 @@ export default function SettingsScreen() {
         <Animated.View entering={FadeInDown.delay(250).duration(400)} style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.textTertiary, fontFamily: 'Inter-SemiBold' }]}>SECURITY</Text>
           <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <SettingRow icon="finger-print" label="Biometric Login" sublabel="Use Face ID or fingerprint" value={biometric} onToggle={setBiometric} iconColor="#00B67A" />
-            <SettingRow icon="lock-closed" label="Change Password" chevron onPress={() => Alert.alert('Change Password', 'A password reset link will be sent to your email.', [{ text: 'OK' }])} />
+            <SettingRow
+              icon="lock-closed"
+              label="Change Password"
+              sublabel="Send a reset link to your email"
+              chevron
+              onPress={() => Alert.alert('Change Password', 'A password reset link will be sent to your email.', [{ text: 'OK' }])}
+            />
           </View>
         </Animated.View>
 
@@ -151,7 +213,8 @@ export default function SettingsScreen() {
         <Animated.View entering={FadeInDown.delay(300).duration(400)} style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.textTertiary, fontFamily: 'Inter-SemiBold' }]}>ABOUT</Text>
           <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <SettingRow icon="information-circle" label="App Version" sublabel="AlphaAI v1.0.0" onPress={() => {}} />
+            <SettingRow icon="school" label="How to Use AlphaAI" sublabel="Guide & trading tips" chevron onPress={() => router.push('/guide')} iconColor="#6C4BEF" />
+            <SettingRow icon="information-circle" label="App Version" sublabel="AlphaAI v1.0.0" />
             <SettingRow icon="document-text" label="Terms of Service" chevron onPress={() => router.push('/terms')} />
             <SettingRow icon="shield-checkmark" label="Privacy Policy" chevron onPress={() => router.push('/privacy')} iconColor="#00B67A" />
           </View>
@@ -173,23 +236,23 @@ const styles = StyleSheet.create({
   container:    { flex: 1 },
   scroll:       { paddingHorizontal: 20 },
   header:       { marginBottom: 24 },
-  title:        { fontSize: 28 },
+  title:        { fontSize: 30 },
   profileCard:  { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 16, borderWidth: 1, padding: 16, marginBottom: 28 },
   avatar:       { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
-  avatarText:   { fontSize: 20, color: '#000' },
+  avatarText:   { fontSize: 22, color: '#000' },
   profileInfo:  { flex: 1 },
-  profileName:  { fontSize: 16, marginBottom: 2 },
-  profileEmail: { fontSize: 13 },
+  profileName:  { fontSize: 18, marginBottom: 2 },
+  profileEmail: { fontSize: 15 },
   tierBadge:    { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4 },
-  tierText:     { fontSize: 12 },
+  tierText:     { fontSize: 14 },
   section:      { marginBottom: 24 },
-  sectionTitle: { fontSize: 11, letterSpacing: 1.2, marginBottom: 8, marginLeft: 4 },
+  sectionTitle: { fontSize: 13, letterSpacing: 1.2, marginBottom: 8, marginLeft: 4 },
   card:         { borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
   row:          { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 14, borderBottomWidth: StyleSheet.hairlineWidth },
   rowIcon:      { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   rowLabel:     { flex: 1 },
-  rowTitle:     { fontSize: 15 },
-  rowSub:       { fontSize: 12, marginTop: 2 },
+  rowTitle:     { fontSize: 17 },
+  rowSub:       { fontSize: 14, marginTop: 2 },
   signOutBtn:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, borderRadius: 16, borderWidth: 1, paddingVertical: 16 },
-  signOutText:  { fontSize: 16 },
+  signOutText:  { fontSize: 18 },
 });

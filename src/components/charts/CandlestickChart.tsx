@@ -191,7 +191,7 @@ function formatPriceLabel(price: number): string {
 
 const styles = StyleSheet.create({
   empty: { alignItems: 'center', justifyContent: 'center' },
-  emptyIcon: { fontSize: 40, opacity: 0.25, marginBottom: Spacing.md },
+  emptyIcon: { fontSize: 42, opacity: 0.25, marginBottom: Spacing.md },
   emptyText: { fontSize: FontSizes.sm, fontFamily: 'Inter-Regular', color: Colors.textTertiary },
   gridLine: {
     position: 'absolute',
@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.chartGrid,
   },
   priceLabel: {
-    fontSize: 9,
+    fontSize: 11,
     fontFamily: 'Inter-Regular',
     color: Colors.textTertiary,
     textAlign: 'right',

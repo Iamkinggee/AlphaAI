@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  View, Text, TextInput, StyleSheet, Pressable,
+  View, Text, TextInput, StyleSheet, Pressable, Alert,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { useRouter, Link } from 'expo-router';
@@ -68,7 +68,9 @@ export default function SignUpScreen() {
   const [loading,       setLoading]       = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  const signUp = useAuthStore((s) => s.signUp);
+  const signUp          = useAuthStore((s) => s.signUp);
+  const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
+  const clearError      = useAuthStore((s) => s.clearError);
 
   const onEmail = (t: string) => {
     setEmail(t);
@@ -110,8 +112,7 @@ export default function SignUpScreen() {
         router.replace('/(tabs)');
       }
     } catch {
-      // If signUp isn't implemented yet, navigate anyway for dev
-      router.replace('/(tabs)');
+      // signUp store already sets the error state
     } finally {
       setLoading(false);
     }
@@ -191,11 +192,8 @@ export default function SignUpScreen() {
           <Pressable
             onPress={async () => {
               setGoogleLoading(true);
-              const ok = await signUp({
-                email: 'google.user@gmail.com',
-                password: 'GoogleDemo2026!',
-                displayName: 'Google User',
-              });
+              if (clearError) clearError();
+              const ok = await signInWithGoogle();
               setGoogleLoading(false);
               if (ok) router.replace('/(tabs)');
             }}
@@ -229,28 +227,28 @@ const styles = StyleSheet.create({
   scroll:       { paddingHorizontal: 24, flexGrow: 1 },
   top:          { alignItems: 'center', marginBottom: 28 },
   logo:         { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', borderWidth: 1, marginBottom: 16 },
-  logoLetter:   { fontSize: 30 },
-  heading:      { fontSize: 24, marginBottom: 6 },
-  subheading:   { fontSize: 14, textAlign: 'center' },
+  logoLetter:   { fontSize: 32 },
+  heading:      { fontSize: 26, marginBottom: 6 },
+  subheading:   { fontSize: 16, textAlign: 'center' },
   card:         { borderRadius: 20, borderWidth: 1, padding: 20, gap: 14, marginBottom: 20 },
   nameRow:      { flexDirection: 'row', gap: 10 },
   fieldWrap:    { gap: 4 },
-  fieldLabel:   { fontSize: 11, letterSpacing: 0.8, textTransform: 'uppercase' },
+  fieldLabel:   { fontSize: 13, letterSpacing: 0.8, textTransform: 'uppercase' },
   field:        { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, borderWidth: 1, paddingHorizontal: 13, paddingVertical: 13 },
-  input:        { flex: 1, fontSize: 15, padding: 0 },
-  errorMsg:     { fontSize: 12, marginLeft: 2 },
+  input:        { flex: 1, fontSize: 17, padding: 0 },
+  errorMsg:     { fontSize: 14, marginLeft: 2 },
   strengthWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   strengthBar:  { flex: 1, flexDirection: 'row', gap: 4 },
   strengthSeg:  { flex: 1, height: 3, borderRadius: 2 },
-  strengthLabel:{ fontSize: 12, minWidth: 40, textAlign: 'right' },
+  strengthLabel:{ fontSize: 14, minWidth: 40, textAlign: 'right' },
   cta:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: 14, marginTop: 4 },
-  ctaText:      { fontSize: 16, color: '#000' },
+  ctaText:      { fontSize: 18, color: '#000' },
   orRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   divider:      { flex: 1, height: 1 },
-  orText:       { fontSize: 13 },
+  orText:       { fontSize: 15 },
   googleBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 52, borderRadius: 14, borderWidth: 1, marginBottom: 24 },
-  googleText:   { fontSize: 15 },
+  googleText:   { fontSize: 17 },
   signinRow:    { flexDirection: 'row', justifyContent: 'center' },
-  signinText:   { fontSize: 14 },
-  signinLink:   { fontSize: 14 },
+  signinText:   { fontSize: 16 },
+  signinLink:   { fontSize: 16 },
 });

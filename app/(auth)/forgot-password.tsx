@@ -56,7 +56,7 @@ export default function ForgotPasswordScreen() {
         {isSent ? (
           <Animated.View entering={FadeInDown.delay(200).duration(500)} style={styles.sentContainer}>
             <View style={styles.sentIcon}>
-              <Text style={{ fontSize: 48 }}>✉️</Text>
+              <Text style={{ fontSize: 50 }}>✉️</Text>
             </View>
             <Text style={styles.sentText}>Email sent to</Text>
             <Text style={styles.sentEmail}>{email}</Text>

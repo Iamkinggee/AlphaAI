@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  View, Text, TextInput, StyleSheet, Pressable,
+  View, Text, TextInput, StyleSheet, Pressable, Alert,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { useRouter, Link } from 'expo-router';
@@ -64,11 +64,13 @@ export default function SignInScreen() {
   const [emailErr, setEmailErr]   = useState('');
   const [passErr, setPassErr]     = useState('');
 
-  const signIn    = useAuthStore((s) => s.signIn);
-  const isLoading = useAuthStore((s) => s.status === 'loading');
-  const authError = useAuthStore((s) => s.error);
-  const clearError= useAuthStore((s) => s.clearError);
+  const signIn          = useAuthStore((s) => s.signIn);
+  const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
+  const isLoading        = useAuthStore((s) => s.isLoading);
+  const authError        = useAuthStore((s) => s.error);
+  const clearError       = useAuthStore((s) => s.clearError);
   const [googleLoading, setGoogleLoading] = useState(false);
+
 
   const onEmail = (t: string) => {
     setEmail(t);
@@ -146,7 +148,7 @@ export default function SignInScreen() {
             onPress={async () => {
               setGoogleLoading(true);
               clearError();
-              const ok = await signIn({ email: 'google.user@gmail.com', password: 'GoogleDemo2026!' });
+              const ok = await signInWithGoogle();
               setGoogleLoading(false);
               if (ok) router.replace('/(tabs)');
             }}
@@ -180,29 +182,29 @@ const styles = StyleSheet.create({
   scroll:       { paddingHorizontal: 24, flexGrow: 1 },
   logoWrap:     { alignItems: 'center', marginBottom: 36 },
   logo:         { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', borderWidth: 1, marginBottom: 14 },
-  logoText:     { fontSize: 34 },
-  brand:        { fontSize: 26, marginBottom: 6 },
-  tagline:      { fontSize: 14 },
+  logoText:     { fontSize: 36 },
+  brand:        { fontSize: 28, marginBottom: 6 },
+  tagline:      { fontSize: 16 },
   card:         { borderRadius: 20, borderWidth: 1, padding: 24, marginBottom: 20 },
-  cardTitle:    { fontSize: 22, marginBottom: 6 },
-  cardSub:      { fontSize: 14, marginBottom: 24 },
+  cardTitle:    { fontSize: 24, marginBottom: 6 },
+  cardSub:      { fontSize: 16, marginBottom: 24 },
   fields:       { gap: 12 },
   fieldWrap:    { gap: 4 },
   field:        { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 14 },
-  input:        { flex: 1, fontSize: 15, padding: 0 },
-  error:        { fontSize: 12, marginLeft: 4 },
+  input:        { flex: 1, fontSize: 17, padding: 0 },
+  error:        { fontSize: 14, marginLeft: 4 },
   authError:    { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 10, borderWidth: 1, padding: 12, marginTop: 14 },
-  authErrorText:{ flex: 1, fontSize: 13 },
+  authErrorText:{ flex: 1, fontSize: 15 },
   submitBtn:    { height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 20 },
-  submitText:   { fontSize: 16, color: '#000' },
+  submitText:   { fontSize: 18, color: '#000' },
   forgotWrap:   { alignItems: 'center', marginTop: 14 },
-  forgot:       { fontSize: 14 },
+  forgot:       { fontSize: 16 },
   orRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   divider:      { flex: 1, height: 1 },
-  orText:       { fontSize: 13 },
+  orText:       { fontSize: 15 },
   googleBtn:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 52, borderRadius: 14, borderWidth: 1, marginBottom: 24 },
-  googleText:   { fontSize: 15 },
+  googleText:   { fontSize: 17 },
   signupRow:    { flexDirection: 'row', justifyContent: 'center' },
-  signupText:   { fontSize: 14 },
-  signupLink:   { fontSize: 14 },
+  signupText:   { fontSize: 16 },
+  signupLink:   { fontSize: 16 },
 });

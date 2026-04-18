@@ -20,19 +20,52 @@ export type SignalStatus =
   | 'stopped'
   | 'expired';
 
+interface LiveSignalRow {
+  id:              string;
+  pair:            string;
+  direction:       'LONG' | 'SHORT';
+  status:          SignalStatus;
+  // Support BOTH column name conventions used across migrations
+  entry_zone_low?:  number; entry_low?:  number;
+  entry_zone_high?: number; entry_high?: number;
+  stop_loss:        number;
+  // Supabase may return either take_profit1 or take_profit_1 depending on migration
+  take_profit1?:  number; take_profit_1?:  number;
+  take_profit2?:  number; take_profit_2?:  number;
+  take_profit3?:  number; take_profit_3?:  number;
+  expires_at:      string;
+  activated_at:    string | null;
+}
+
+// Normalise the raw DB row into a clean LiveSignal shape.
 interface LiveSignal {
-  id: string;
-  pair: string;
-  direction: 'LONG' | 'SHORT';
-  status: SignalStatus;
-  entry_zone_low: number;
-  entry_zone_high: number;
-  stop_loss: number;
-  take_profit_1: number;
-  take_profit_2: number;
-  take_profit_3: number;
-  expires_at: string;
-  activated_at: string | null;
+  id:             string;
+  pair:           string;
+  direction:      'LONG' | 'SHORT';
+  status:         SignalStatus;
+  entryLow:       number;
+  entryHigh:      number;
+  stopLoss:       number;
+  takeProfit1:    number;
+  takeProfit2:    number;
+  takeProfit3:    number;
+  expiresAt:      string;
+}
+
+function normaliseRow(r: LiveSignalRow): LiveSignal {
+  return {
+    id:          r.id,
+    pair:        r.pair,
+    direction:   r.direction,
+    status:      r.status,
+    entryLow:    r.entry_zone_low  ?? r.entry_low  ?? 0,
+    entryHigh:   r.entry_zone_high ?? r.entry_high ?? 0,
+    stopLoss:    r.stop_loss,
+    takeProfit1: r.take_profit1 ?? r.take_profit_1 ?? 0,
+    takeProfit2: r.take_profit2 ?? r.take_profit_2 ?? 0,
+    takeProfit3: r.take_profit3 ?? r.take_profit_3 ?? 0,
+    expiresAt:   r.expires_at,
+  };
 }
 
 let monitorInterval: ReturnType<typeof setInterval> | null = null;
@@ -61,13 +94,14 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
   const now = new Date().toISOString();
 
   // Load all active / approaching signals
-  const { data: signals } = await db
+  const { data: rawSignals } = await db
     .from('signals')
     .select('*')
     .in('status', ['approaching', 'active', 'TP1_hit', 'TP2_hit'])
-    .returns<LiveSignal[]>();
+    .returns<LiveSignalRow[]>();
 
-  if (!signals?.length) return;
+  if (!rawSignals?.length) return;
+  const signals = rawSignals.map(normaliseRow);
 
   for (const signal of signals) {
     const currentPrice = prices[signal.pair];
@@ -78,7 +112,10 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
       await db.from('signals').update({
         status: newStatus,
         updated_at: now,
-        ...(newStatus === 'stopped' || newStatus === 'expired' ? { resolved_at: now } : {}),
+        // Mark closed_at for ALL terminal states
+        ...((['stopped', 'expired', 'TP3_hit'] as SignalStatus[]).includes(newStatus)
+          ? { closed_at: now }
+          : {}),
       }).eq('id', signal.id);
 
       console.log(`📊 [Lifecycle] ${signal.pair} ${signal.status} → ${newStatus} @ $${currentPrice}`);
@@ -87,44 +124,63 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
       broadcastAll({
         type: newStatus === 'stopped' ? 'signal_stopped' : 'signal_tp_hit',
         timestamp: Date.now(),
-        data: { signalId: signal.id, pair: signal.pair, status: newStatus, price: currentPrice },
+        data: {
+          signalId: signal.id,
+          pair: signal.pair,
+          status: newStatus,
+          price: currentPrice,
+          created_at: now,   // ISO string — used by client freshness gate
+        },
       });
 
-      // Insert notification
-      await db.from('notifications').insert({
-        type: mapStatusToNotifType(newStatus),
-        priority: newStatus === 'stopped' ? 'high' : 'critical',
-        title: buildNotifTitle(signal.pair, newStatus, currentPrice),
-        body: buildNotifBody(signal, newStatus, currentPrice),
-        pair: signal.pair,
-        signal_id: signal.id,
-      });
+      // ── Only insert a notification if we haven't already done so for this signal+status ──
+      const notifType = mapStatusToNotifType(newStatus);
+      const { count } = await db
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('signal_id', signal.id)
+        .eq('type', notifType);
+
+      if ((count ?? 0) === 0) {
+        await db.from('notifications').insert({
+          type:      notifType,
+          priority:  newStatus === 'stopped' ? 'high' : 'critical',
+          title:     buildNotifTitle(signal.pair, newStatus, currentPrice),
+          body:      buildNotifBody(signal, newStatus, currentPrice),
+          pair:      signal.pair,
+          signal_id: signal.id,
+        });
+      }
+
     }
   }
 }
 
 function evaluateSignal(signal: LiveSignal, price: number, now: string): SignalStatus | null {
-  const { direction, stop_loss, take_profit_1, take_profit_2, take_profit_3, expires_at, status } = signal;
+  const { direction, stopLoss, takeProfit1, takeProfit2, takeProfit3, expiresAt, status } = signal;
   const isLong = direction === 'LONG';
 
   // 1. Expiry check
-  if (new Date(expires_at) < new Date(now)) return 'expired';
+  if (new Date(expiresAt) < new Date(now)) return 'expired';
 
-  // 2. Stop loss hit
-  const slHit = isLong ? price <= stop_loss : price >= stop_loss;
-  if (slHit) return 'stopped';
+  // 2. Stop loss hit (ONLY if already active)
+  if (status !== 'approaching') {
+    const slHit = isLong ? price <= stopLoss : price >= stopLoss;
+    if (slHit) return 'stopped';
+  }
+
 
   // 3. TP progression
   if (status === 'active' || status === 'approaching') {
-    const tp1Hit = isLong ? price >= take_profit_1 : price <= take_profit_1;
+    const tp1Hit = isLong ? price >= takeProfit1 : price <= takeProfit1;
     if (tp1Hit) return 'TP1_hit';
   }
   if (status === 'TP1_hit') {
-    const tp2Hit = isLong ? price >= take_profit_2 : price <= take_profit_2;
+    const tp2Hit = isLong ? price >= takeProfit2 : price <= takeProfit2;
     if (tp2Hit) return 'TP2_hit';
   }
   if (status === 'TP2_hit') {
-    const tp3Hit = isLong ? price >= take_profit_3 : price <= take_profit_3;
+    const tp3Hit = isLong ? price >= takeProfit3 : price <= takeProfit3;
     if (tp3Hit) return 'TP3_hit';
   }
 

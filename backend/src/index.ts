@@ -2,7 +2,11 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import dns from 'dns';
 import { config } from './config';
+
+// Fix Node 18+ native fetch hanging for 30s trying IPv6 before falling back to IPv4
+dns.setDefaultResultOrder('ipv4first');
 
 // ── Route imports ─────────────────────────────────────────────────────
 import authRoutes         from './routes/auth';
@@ -74,16 +78,26 @@ app.use((err: Error, _req: Request, res: Response) => {
 
 // ── Startup ───────────────────────────────────────────────────────────
 const start = () => {
-  const server = app.listen(config.PORT, () => {
+  const server = app.listen(Number(config.PORT), '0.0.0.0', () => {
+    let lanIp = 'localhost';
+    try {
+      const { networkInterfaces } = require('os');
+      const nets = networkInterfaces();
+      for (const iface of Object.values(nets) as any[]) {
+        for (const addr of iface) {
+          if (addr.family === 'IPv4' && !addr.internal) { lanIp = addr.address; break; }
+        }
+        if (lanIp !== 'localhost') break;
+      }
+    } catch {}
+
     console.log(`
 ╔══════════════════════════════════════╗
 ║       AlphaAI Backend Server         ║
 ╠══════════════════════════════════════╣
-║  Port:  ${config.PORT}                              
-║  Env:   ${config.NODE_ENV}                       
-║  Routes: /api/auth | signals | market
-║          journal | watchlist | notifs
-║  WS:    /ws (real-time feed)
+║  Local:  http://localhost:${config.PORT}
+║  LAN:    http://${lanIp}:${config.PORT}
+║  WS:     ws://${lanIp}:${config.PORT}/ws
 ╚══════════════════════════════════════╝
     `);
   });
@@ -91,10 +105,32 @@ const start = () => {
   // Boot WebSocket hub
   attachWsServer(server);
 
-  // Boot 3-stage detection pipeline (non-blocking)
-  startPipeline().catch((err) =>
-    console.error('💥 [Pipeline] Failed to start:', err)
-  );
+  console.log('🏁 [Startup] Waiting for Redis...');
+  // Wait for Redis before starting pipeline
+  import('./cache/redisClient').then(m => {
+    console.log('🏁 [Startup] Redis module loaded, calling waitForRedis()...');
+    return m.waitForRedis();
+  }).then(() => {
+    console.log('🏁 [Startup] Redis ready, booting pipeline...');
+    // Boot 3-stage detection pipeline (non-blocking)
+    startPipeline().catch((err) =>
+      console.error('💥 [Pipeline] Failed to start:', err)
+    );
+  }).catch(err => {
+    console.error('💥 [Startup] Initialization error:', err);
+  });
+
+  // ── Graceful shutdown (releases port on hot-reload, prevents EADDRINUSE) ──
+  const shutdown = () => {
+    server.close(() => {
+      console.log('🛑 Server closed');
+      process.exit(0);
+    });
+    // Force-exit after 2s if connections linger
+    setTimeout(() => process.exit(0), 2000);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT',  shutdown);
 };
 
 start();

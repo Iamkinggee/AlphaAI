@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
   },
   icon: {
-    fontSize: 32,
+    fontSize: 34,
   },
   title: {
     fontSize: FontSizes.xl,

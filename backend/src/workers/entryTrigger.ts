@@ -1,110 +1,195 @@
 /**
  * AlphaAI Backend — Stage 3: Entry Trigger
- * Runs on every 5M candle close (event-driven).
- * Checks if price has entered the zone with a confirmation pattern:
- *  - Bullish/bearish engulfing
- *  - Pin bar / hammer
- *  - Volume spike validation
- * If confirmed, upgrades the signal from "approaching" → "active"
- * and emits a push notification.
+ * Professional SMC 5M Confirmation — fires at candle close, never before.
+ *
+ * Confirmation hierarchy (highest to lowest weight):
+ *  A. 5M BOS — close beyond recent 5M swing structure  (+15 pts)
+ *  B. 5M FVG Fill — price fills a same-direction imbalance (+12 pts)
+ *  C. Bullish/Bearish Engulfing candle                   (+10 pts)
+ *  D. Pin Bar / Liquidity Sweep Wick (≥2× body, matching direction) (+10 pts)
+ *
+ * Hard Rules:
+ *  - Price MUST have closed inside or at the edge of the entry zone.
+ *  - Confirmation candle volume MUST exceed the 20-period average.
+ *  - Final score must be ≥ 70.
+ *  - NO catch-all zone_entry fallback — confirmation must be explicit.
  */
 import type { ApproachingSignal } from './approachDetector';
 
 const MIN_ACTIVATION_SCORE = 70;
 
 export interface ActiveSignal extends ApproachingSignal {
-  status: 'active';
-  activatedAt: number;
-  confirmationType: 'engulfing' | 'pin_bar' | 'volume_spike' | 'zone_entry';
-  finalScore: number;
+  status:           'active';
+  activatedAt:      number;
+  confirmationType: '5M_BOS' | 'engulfing' | 'pin_bar' | 'fvg_fill';
+  finalScore:       number;
 }
 
 export interface Candle5M {
   timestamp: number;
-  open: number;
-  high: number;
-  close: number;
-  low: number;
-  volume: number;
+  open:      number;
+  high:      number;
+  close:     number;
+  low:       number;
+  volume:    number;
 }
 
 /**
  * Main entry point for the Entry Trigger.
- * Called on each 5M candle close for pairs with approaching signals.
+ * Called on every 5M candle close for pairs with an open approaching signal.
  */
 export async function runEntryTrigger(
-  signal: ApproachingSignal,
+  signal:        ApproachingSignal,
   recentCandles: Candle5M[]
 ): Promise<ActiveSignal | null> {
-  if (recentCandles.length < 3) return null;
+  if (recentCandles.length < 20) return null;
 
-  const latestCandle = recentCandles[recentCandles.length - 1];
-  const prevCandle   = recentCandles[recentCandles.length - 2];
+  const latest = recentCandles[recentCandles.length - 1];
 
-  // ── Check 1: Price inside entry zone ──────────────────────────
-  const inZone =
-    latestCandle.close >= signal.entryZone.low &&
-    latestCandle.close <= signal.entryZone.high;
-
+  // ── 1. Entry Zone Check ────────────────────────────────────────────
+  // Price must have closed inside the pre-mapped entry zone.
+  const { low, high } = { low: signal.entry_low ?? signal.entry_zone_low, high: signal.entry_high ?? signal.entry_zone_high };
+  const inZone = latest.close >= low && latest.close <= high;
   if (!inZone) return null;
 
-  // ── Check 2: Confirmation pattern ─────────────────────────────
-  const { confirmed, type: confirmationType, bonus } = checkConfirmation(latestCandle, prevCandle, signal.direction);
-  if (!confirmed) return null;
+  // ── 2. Volume Gate — Institutional Participation ───────────────────
+  // Confirmation candle volume must exceed the 20-period average.
+  const avgVolume = recentCandles.slice(-21, -1).reduce((s, c) => s + c.volume, 0) / 20;
+  if (avgVolume <= 0 || latest.volume < avgVolume) {
+    // Low volume = no institutional participation — silent reject
+    return null;
+  }
 
-  // ── Check 3: Final score with confirmation bonus ───────────────
-  const finalScore = Math.min(100, signal.confluenceScore + bonus);
+  // ── 3. SMC Micro-Structure Confirmation ───────────────────────────
+  const confirmation = detect5MConfirmation(recentCandles, signal.direction, signal.entryZone);
+  if (!confirmation) return null; // No valid SMC pattern — silent reject
+
+  // ── 4. Final Scoring ───────────────────────────────────────────────
+  const finalScore = Math.min(100, signal.confluenceScore + confirmation.bonus);
   if (finalScore < MIN_ACTIVATION_SCORE) return null;
 
-  console.log(`🔥 [EntryTrigger] ${signal.pair} activated — Score: ${finalScore} — Pattern: ${confirmationType}`);
+  console.log(
+    `🔥 [EntryTrigger] ${signal.pair} ACTIVATED` +
+    ` — Pattern: ${confirmation.type}` +
+    ` — Score: ${finalScore}` +
+    ` — Direction: ${signal.direction}` +
+    ` — Price: ${latest.close}`
+  );
 
   return {
     ...signal,
-    status: 'active',
-    activatedAt: Date.now(),
-    confirmationType,
+    status:           'active',
+    activatedAt:      Date.now(),
+    confirmationType: confirmation.type,
     finalScore,
   };
 }
 
+// ── Confirmation Detection ─────────────────────────────────────────────
+
+interface ConfirmationResult {
+  type:  ActiveSignal['confirmationType'];
+  bonus: number;
+}
+
 /**
- * Detects price action confirmation patterns on the 5M candle.
+ * Detects SMC confirmation patterns on the 5M chart.
+ * Returns null if no valid pattern is found (hard reject).
  */
-function checkConfirmation(
-  candle: Candle5M,
-  prev: Candle5M,
-  direction: 'LONG' | 'SHORT'
-): { confirmed: boolean; type: ActiveSignal['confirmationType']; bonus: number } {
-  const body       = Math.abs(candle.close - candle.open);
-  const totalRange = candle.high - candle.low;
-  const upperWick  = candle.high - Math.max(candle.open, candle.close);
-  const lowerWick  = Math.min(candle.open, candle.close) - candle.low;
-  const isBullishCandle = candle.close > candle.open;
+function detect5MConfirmation(
+  candles:   Candle5M[],
+  direction: 'LONG' | 'SHORT',
+  zone:      { low: number; high: number }
+): ConfirmationResult | null {
+  const latest   = candles[candles.length - 1];
+  const prev     = candles[candles.length - 2];
+  const isBullishCandle = latest.close > latest.open;
 
-  // Bullish engulfing
-  if (direction === 'LONG' && isBullishCandle && candle.open < prev.close && candle.close > prev.open) {
-    return { confirmed: true, type: 'engulfing', bonus: 12 };
+  // ── A. 5M BOS (Highest Weight — +15) ──────────────────────────────
+  // Latest 5M candle closed beyond the most recent confirmed 5M swing.
+  const swings = detectRecent5MSwings(candles.slice(-10, -1));
+  if (direction === 'LONG' && swings.high !== null && latest.close > swings.high) {
+    return { type: '5M_BOS', bonus: 15 };
+  }
+  if (direction === 'SHORT' && swings.low !== null && latest.close < swings.low) {
+    return { type: '5M_BOS', bonus: 15 };
   }
 
-  // Bearish engulfing
-  if (direction === 'SHORT' && !isBullishCandle && candle.open > prev.close && candle.close < prev.open) {
-    return { confirmed: true, type: 'engulfing', bonus: 12 };
+  // ── B. 5M FVG Fill (+12) ───────────────────────────────────────────
+  // Price filled a same-direction imbalance created in the last 5 candles.
+  const recentFVG = detect5MFVG(candles.slice(-6, -1));
+  if (recentFVG && recentFVG.direction === direction) {
+    const insideFVG = latest.close >= recentFVG.low && latest.close <= recentFVG.high;
+    if (insideFVG) return { type: 'fvg_fill', bonus: 12 };
   }
 
-  // Hammer / pin bar (long lower wick from demand zone)
-  if (direction === 'LONG' && lowerWick > body * 2 && lowerWick > upperWick * 2) {
-    return { confirmed: true, type: 'pin_bar', bonus: 8 };
+  // ── C. Bullish / Bearish Engulfing (+10) ───────────────────────────
+  const body     = Math.abs(latest.close - latest.open);
+  const prevBody = Math.abs(prev.close - prev.open);
+
+  if (direction === 'LONG' && isBullishCandle && body > prevBody && latest.close > prev.high) {
+    return { type: 'engulfing', bonus: 10 };
+  }
+  if (direction === 'SHORT' && !isBullishCandle && body > prevBody && latest.close < prev.low) {
+    return { type: 'engulfing', bonus: 10 };
   }
 
-  // Shooting star (long upper wick from supply zone)
-  if (direction === 'SHORT' && upperWick > body * 2 && upperWick > lowerWick * 2) {
-    return { confirmed: true, type: 'pin_bar', bonus: 8 };
+  // ── D. Pin Bar / Liquidity Sweep Wick (+10) ────────────────────────
+  // A strong wick into the zone followed by a rejection body.
+  const lowerWick = Math.min(latest.open, latest.close) - latest.low;
+  const upperWick = latest.high - Math.max(latest.open, latest.close);
+
+  if (direction === 'LONG') {
+    // Long pin bar: lower wick at least 2× the body AND dominates upper wick
+    if (body > 0 && lowerWick >= body * 2 && lowerWick > upperWick * 1.5) {
+      return { type: 'pin_bar', bonus: 10 };
+    }
+  }
+  if (direction === 'SHORT') {
+    // Short pin bar: upper wick at least 2× the body AND dominates lower wick
+    if (body > 0 && upperWick >= body * 2 && upperWick > lowerWick * 1.5) {
+      return { type: 'pin_bar', bonus: 10 };
+    }
   }
 
-  // Volume spike (candle volume 1.5× average) — simple zone entry
-  if (body / totalRange > 0.6) {
-    return { confirmed: true, type: 'zone_entry', bonus: 5 };
-  }
+  // No valid SMC pattern — hard reject
+  return null;
+}
 
-  return { confirmed: false, type: 'zone_entry', bonus: 0 };
+// ── 5M Structural Helpers ──────────────────────────────────────────────
+
+function detectRecent5MSwings(
+  candles: Candle5M[]
+): { high: number | null; low: number | null } {
+  let high: number | null = null;
+  let low:  number | null = null;
+
+  for (let i = 1; i < candles.length - 1; i++) {
+    const c = candles[i];
+    if (c.high > candles[i - 1].high && c.high > candles[i + 1].high) {
+      if (high === null || c.high > high) high = c.high;
+    }
+    if (c.low < candles[i - 1].low && c.low < candles[i + 1].low) {
+      if (low === null || c.low < low) low = c.low;
+    }
+  }
+  return { high, low };
+}
+
+function detect5MFVG(
+  candles: Candle5M[]
+): { direction: 'LONG' | 'SHORT'; low: number; high: number } | null {
+  for (let i = 1; i < candles.length - 1; i++) {
+    const prev = candles[i - 1];
+    const next = candles[i + 1];
+    // Bullish FVG: gap up — high of i-1 < low of i+1
+    if (prev.high < next.low && (next.low - prev.high) / prev.high > 0.001) {
+      return { direction: 'LONG', low: prev.high, high: next.low };
+    }
+    // Bearish FVG: gap down — low of i-1 > high of i+1
+    if (prev.low > next.high && (prev.low - next.high) / next.high > 0.001) {
+      return { direction: 'SHORT', low: next.high, high: prev.low };
+    }
+  }
+  return null;
 }

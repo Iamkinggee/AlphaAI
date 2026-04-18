@@ -60,7 +60,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   label: {
-    fontSize: 10,
+    fontSize: 12,
     letterSpacing: 0.5,
   },
 });

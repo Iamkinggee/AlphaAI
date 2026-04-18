@@ -1,6 +1,6 @@
 # AlphaAI — Project Memory & Architecture
 
-> **Last Updated:** 2026-04-15T13:52:00+01:00
+> **Last Updated:** 2026-04-17T12:00:00+01:00
 
 ---
 
@@ -353,26 +353,26 @@ xxl: 24px, xxxl: 32px, xxxxl: 40px
 - [x] `supabase/migrations/001_users.sql`, `002_signals.sql`, `003_journal.sql`
 - [x] Directory scaffold: `workers/`, `services/structureEngine/`, `routes/`, `cache/`
 
-**Services** (building now):
-- [/] `src/cache/redisClient.ts` — Redis connection singleton
-- [ ] `src/services/supabaseClient.ts` — Supabase client wrapper
-- [ ] `src/routes/signals.ts` — GET /signals
+**Services** (complete):
+- [x] `src/cache/redisClient.ts` — Redis connection singleton + Structural Map helpers
+- [x] `src/services/supabaseClient.ts` — Supabase client wrapper
+- [x] `src/routes/signals.ts` — GET /signals, DELETE /signals/history (Bulk Clear)
 - [ ] `src/routes/auth.ts` — POST /auth/sign-in, sign-up
 - [ ] `src/routes/journal.ts` — CRUD /journal
 - [ ] `src/routes/market.ts` — GET /market/pulse
 
 ---
 
-### 📋 Phase 3: Signal Engine (Not Started)
+### ✅ Phase 3: Signal Engine (ACTIVE)
 
 **3-Stage Detection Pipeline:**
-- [ ] **Stage 1: Structure Scanner** — Swing detection, OB/FVG/S&D/liquidity identification (7 files)
-- [ ] **Stage 2: Approach Detector** — Price proximity check, confluence scoring, approaching alerts
-- [ ] **Stage 3: Entry Trigger** — 5M confirmation, volume validation, active upgrade
+- [x] **Stage 1: Structure Scanner** — Professional SMC logic (ZigZag, BOS, CHOCH, real OBs, S&D, FVG, Premium/Discount)
+- [ ] **Stage 2: Approach Detector** — Price proximity check, hard rejection rules (RR > 1:2), setup labelling
+- [ ] **Stage 3: Entry Trigger** — 5M confirmation (BOS, sweep), volume validation, active upgrade
 
 **Supporting Services:**
-- [ ] Signal scorer (confluence 0-100)
-- [ ] Trade planner (Entry/SL/TP computation)
+- [x] Signal Scorer — Spec-exact weights (OB=20, Sweep=20, FVG=15, 1D Alignment=10, 5M BOS=15)
+- [/] Trade Planner — Structural TP targeting (FVG/Liquidity/HTF) (Phase 4 active)
 - [ ] Notification service (Expo Push + FCM)
 - [ ] AI service (GPT-4o context assembly)
 
@@ -392,12 +392,12 @@ xxl: 24px, xxxl: 32px, xxxxl: 40px
 
 | File | Status | Location | Notes |
 |---|---|---|---|
-| `app/(tabs)/journal.tsx` | 🔨 **ACTIVE** | Line 20 | Trade journal — final UI review |
-| `app/(tabs)/settings.tsx` | 👁️ Open | — | User settings screen |
-| `src/components/ui/EmptyState.tsx` | 👁️ Open | — | Empty state component |
-| `app.config.ts` | 👁️ Open | — | Expo config |
-| `.env.example` | 👁️ Open | — | Environment variables |
-| `src/constants/fonts.ts` | 👁️ Open | — | Font definitions |
+| `backend/src/workers/approachDetector.ts` | 🔨 **ACTIVE** | — | Implementing hard rejection rules |
+| `backend/src/services/tradePlanner.ts` | 🔨 **ACTIVE** | — | Structural TP targeting |
+| `backend/src/workers/structureScanner.ts` | ✅ Done | — | Professional SMC engine |
+| `backend/src/services/signalScorer.ts` | ✅ Done | — | Spec-exact scoring |
+| `app/(tabs)/signals.tsx` | ✅ Refactored | — | History UI + Clear All |
+| `backend/src/services/pipelineOrchestrator.ts` | ✅ Patched | — | Notification loop cooldown fix |
 
 ---
 
@@ -430,25 +430,22 @@ eas build --profile production
 
 | Timestamp | Event |
 |---|---|
+| 2026-04-17T12:00:00 | **SMC Engine Stage 1 & 2 Scorer DONE.** Proper ZigZag, BOS, real OB detection + spec scoring. |
+| 2026-04-17T11:30:00 | Notification Loop Fix: Added `closed_at` + 4h cooldown logic + updated_at fallback. |
+| 2026-04-17T10:45:00 | UI Refactor: Bulk "Clear All History" trash icon + backend DELETE endpoint. |
 | 2026-04-15T12:33:00 | Phase 3.5 Custom Hooks complete — 0 TypeScript errors. All screens use hooks. |
 | 2026-04-15T12:00:00 | Phase 3 components refactored into all screens + Sparklines + formatters complete |
 | 2026-04-15T11:45:00 | Phase 2 complete. Building Phase 3 signal components + formatters |
 | 2026-04-15T11:40:00 | Phase 2 complete — 0 TypeScript errors. All stores wired to all screens. |
-| 2026-04-15T10:40:00 | Fixed StatusBadge type mismatch + auth/index route — tsc clean |
-| 2026-04-15T10:09:00 | All 7 Zustand stores + apiClient + wsManager created |
-| 2026-04-15T10:03:00 | Types (signal, market, journal, auth) + mockSignals created |
-| 2026-04-15T09:29:00 | Phase 1 UI/UX complete |
 
 ---
 
 ## 🎯 Next Immediate Actions
 
-1. ✅ ~~Phase 1 UI~~ — Complete
-2. ✅ ~~Zustand Stores + API Client~~ — Complete  
-3. ✅ ~~Signal Components + Formatters~~ — Complete
-4. ✅ ~~Custom Hooks Layer (Phase 3.5)~~ — Complete, 0 TS errors
-5. 🔨 **Backend Services** — Redis client, Supabase client, REST routes
-6. 📋 **3-Stage Detection Pipeline** — Structure Scanner, Approach Detector, Entry Trigger
+1. ✅ Phase 2 Backend Services (Redis, Supabase, Basic Routes)
+2. 🔨 **Phase 3 Signal Engine** — Stage 1 (Scanner) & Scorer COMPLETE. Stage 2 (Approach) & Stage 3 (Entry) active.
+3. 🔨 **Universe Expansion** — Targeting Top 80 USDT Perpetual pairs from Binance.
+4. 📋 Phase 4-5 Integration & AI Chat features.
 
 ---
 

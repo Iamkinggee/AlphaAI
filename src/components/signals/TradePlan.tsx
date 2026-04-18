@@ -66,14 +66,14 @@ export function TradePlan({ signal, compact = false }: TradePlanProps) {
 
 const styles = StyleSheet.create({
   container:    { borderRadius: 16, borderWidth: 1, overflow: 'hidden', marginBottom: 14 },
-  sectionTitle: { fontSize: 14, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  sectionTitle: { fontSize: 16, paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth },
   row:          { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, minHeight: 44 },
   labelGroup:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label:        { fontSize: 14 },
+  label:        { fontSize: 16 },
   hitBadge:     { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  hitText:      { fontSize: 10 },
+  hitText:      { fontSize: 12 },
   valueGroup:   { alignItems: 'flex-end' },
-  value:        { fontSize: 15 },
-  sub:          { fontSize: 12, marginTop: 2 },
+  value:        { fontSize: 17 },
+  sub:          { fontSize: 14, marginTop: 2 },
   divider:      { height: StyleSheet.hairlineWidth, marginHorizontal: 16 },
 });

@@ -3,7 +3,10 @@
  * POST /chat/sessions          — Create new chat session
  * GET  /chat/sessions          — List user's sessions
  * POST /chat/sessions/:id      — Send message to session (AI response)
- * GET  /chat/sessions/:id      — Get session history
+ * GET  /chat/sessions/:id      — Get session message history
+ *
+ * Auth: Extracts user ID from the Supabase JWT (Authorization: Bearer <token>).
+ * Dev tokens (dev_*) are mapped to a stable dev user ID so local dev works.
  */
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
@@ -11,12 +14,42 @@ import { generateAIResponse } from '../services/openaiService';
 
 const router = Router();
 
-function getUserId(req: Request): string | null {
-  return req.headers['x-user-id'] as string ?? null;
+const DEV_USER_ID = 'dev_user_001';
+
+/**
+ * Extract user ID from the request.
+ * 1. Tries to verify the Supabase JWT from the Authorization header.
+ * 2. If the token starts with "dev_" (local dev session), returns a stable dev ID.
+ * 3. Falls back to the x-user-id header (legacy support).
+ */
+async function getUserId(req: Request): Promise<string | null> {
+  // Legacy header support
+  const headerUserId = req.headers['x-user-id'] as string | undefined;
+  if (headerUserId) return headerUserId;
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+
+  const token = authHeader.slice(7);
+
+  // Dev mode tokens — return a stable dev user ID
+  if (token.startsWith('dev_')) {
+    return DEV_USER_ID;
+  }
+
+  // Validate real Supabase token
+  try {
+    const db = getSupabaseClient();
+    const { data, error } = await db.auth.getUser(token);
+    if (error || !data?.user) return null;
+    return data.user.id;
+  } catch {
+    return null;
+  }
 }
 
 // System prompt for the AI trading analyst
-const SYSTEM_PROMPT = `You are AlphaAI, an institutional-grade crypto trading analyst specialising in Smart Money Concepts (SMC). 
+const SYSTEM_PROMPT = `You are AlphaAI, an institutional-grade crypto trading analyst specialising in Smart Money Concepts (SMC).
 
 Your expertise includes:
 - Order Blocks (OB): Identifying institutional candles before significant moves
@@ -26,20 +59,26 @@ Your expertise includes:
 - Market Structure: HH, HL, LH, LL, CHoCH, BOS analysis
 - Confluence scoring: Weighting multiple factors for high-probability setups
 
+RESPONSE RULES — follow these strictly:
+- NEVER start a response with phrases like "I'm analysing your query", "Let me analyse", "I'll now", "Certainly!", or any preamble. Jump straight into the answer.
+- NEVER narrate what you are about to do. Just do it.
+- Be concise, structured, and data-driven.
+- Use markdown headers (**bold**) for structure.
+- Always end an analysis with: "⚠️ Not financial advice. Manage risk appropriately."
+- Never give financial advice or make guarantees about price movements.
+
 When analysing a signal or chart, always:
 1. Identify the dominant trend on the higher timeframe (HTF)
 2. Look for a structural shift (CHoCH or BOS)
 3. Find the nearest OB/FVG/S&D zone in the trade direction
 4. Calculate R:R before entry (minimum 1:2)
-5. State clear invalidation level
-
-Be concise, data-driven, and never give financial advice. Always include a risk warning.`;
+5. State clear invalidation level`;
 
 /**
  * POST /chat/sessions — Create a new session
  */
 router.post('/sessions', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
   const { title = 'New Analysis', signalContextId } = req.body;
@@ -69,7 +108,7 @@ router.post('/sessions', async (req: Request, res: Response) => {
  * GET /chat/sessions — List user sessions
  */
 router.get('/sessions', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
   const db = getSupabaseClient();
@@ -88,7 +127,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
  * GET /chat/sessions/:id — Get session message history
  */
 router.get('/sessions/:id', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
   const db = getSupabaseClient();
@@ -107,7 +146,7 @@ router.get('/sessions/:id', async (req: Request, res: Response) => {
  * POST /chat/sessions/:id — Send message + get AI response
  */
 router.post('/sessions/:id', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
+  const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
   const { content } = req.body;
@@ -153,4 +192,3 @@ router.post('/sessions/:id', async (req: Request, res: Response) => {
 
 
 export default router;
-

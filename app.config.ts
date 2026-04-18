@@ -8,10 +8,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   name: 'AlphaAI',
   slug: 'AlphaAI',
   version: '1.0.0',
-  orientation: 'portrait',
+   orientation: 'portrait',
   icon: './assets/images/icon.png',
   scheme: 'alphaai',
   userInterfaceStyle: 'automatic',
+  // @ts-ignore - Future SDK 54 properties
   newArchEnabled: true,
 
   ios: {
@@ -29,6 +30,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       backgroundImage: './assets/images/android-icon-background.png',
       monochromeImage: './assets/images/android-icon-monochrome.png',
     },
+    // @ts-ignore - Future SDK 54 properties
     edgeToEdgeEnabled: true,
     package: 'com.alphaai.app',
   },
@@ -69,7 +71,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   extra: {
     eas: {
-      projectId: 'your-eas-project-id',
+      projectId: process.env.EXPO_PUBLIC_PROJECT_ID || '00000000-0000-0000-0000-000000000000',
     },
   },
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useAuthStore } from '@/src/store/useAuthStore';
 
 /**
@@ -15,6 +15,7 @@ export function useAuth() {
     initialize,
     signIn,
     signUp,
+    signInWithGoogle,
     signOut,
   } = useAuthStore();
 
@@ -32,6 +33,7 @@ export function useAuth() {
     initialize,
     signIn,
     signUp,
+    signInWithGoogle,
     signOut,
   };
 }

@@ -5,6 +5,9 @@ import { wsManager } from '@/src/services/wsManager';
 /**
  * AlphaAI — useMarket Hook
  * Real-time price updates, market sentiment, and WS subscription management.
+ *
+ * Subscribes the WS to ALL pairs loaded from the backend (top 80 by volume).
+ * Uses a wildcard '*' subscription so ANY signal pair gets price ticks.
  */
 export function useMarket() {
   const {
@@ -15,39 +18,37 @@ export function useMarket() {
     updatePriceTick,
   } = useMarketStore();
 
-  const PAIRS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'DOGE/USDT', 'LINK/USDT', 'AVAX/USDT'];
   const unsubRef = useRef<(() => void) | null>(null);
 
-  // Initial REST fetch for all prices and market pulse
+  // Initial REST fetch — loads pulse + full pair list (top 80)
   useEffect(() => {
     fetchPulse();
   }, []);
 
   // Subscribe to real-time WS price ticks
+  // Use '*' wildcard so we receive ticks for ALL 80 pairs without listing them
   useEffect(() => {
-    // Subscribe to pairs on the WS server
-    wsManager.subscribe(PAIRS);
+    // Wildcard subscription — backend sends price_tick for every monitored pair
+    wsManager.subscribe(['*']);
 
-    // Register price_tick event handler → update Zustand store
     const unsubHandler = wsManager.on<{ pair: string; price: number; change24h: number }>(
       'price_tick',
       ({ pair, price, change24h }) => {
-        const current = useMarketStore.getState().priceTicks[pair];
-        if (!current) return;
+        // Update the tick for any pair — whether it was pre-loaded or not
         updatePriceTick({
-          ...current,
+          pair,
           price,
-          priceFormatted: formatPrice(price),
-          change24h,
-          change24hFormatted: `${change24h >= 0 ? '+' : ''}${change24h.toFixed(2)}%`,
-          lastUpdated: Date.now(),
+          priceFormatted:     formatPrice(price),
+          change24h:          change24h ?? 0,
+          change24hFormatted: `${(change24h ?? 0) >= 0 ? '+' : ''}${(change24h ?? 0).toFixed(2)}%`,
+          lastUpdated:        Date.now(),
         });
       }
     );
 
     unsubRef.current = () => {
       unsubHandler();
-      wsManager.unsubscribe(PAIRS);
+      wsManager.unsubscribe(['*']);
     };
 
     return () => unsubRef.current?.();
@@ -65,7 +66,8 @@ export function useMarket() {
 }
 
 function formatPrice(price: number): string {
-  if (price >= 1000) return `$${price.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
-  if (price >= 1)    return `$${price.toFixed(4)}`;
-  return `$${price.toPrecision(4)}`;
+  if (price >= 10000) return `$${price.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  if (price >= 1000)  return `$${price.toFixed(1)}`;
+  if (price >= 1)     return `$${price.toFixed(3)}`;
+  return `$${price.toFixed(5)}`;
 }

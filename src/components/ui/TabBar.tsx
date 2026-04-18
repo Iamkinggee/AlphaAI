@@ -122,5 +122,5 @@ const styles = StyleSheet.create({
     top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 12,
   },
-  label: { fontSize: 10, marginTop: 3, letterSpacing: 0.2 },
+  label: { fontSize: 12, marginTop: 3, letterSpacing: 0.2 },
 });

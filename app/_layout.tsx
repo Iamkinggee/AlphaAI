@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, LogBox } from 'react-native';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { useFonts } from 'expo-font';
 import {
@@ -18,6 +18,9 @@ import { SplashView } from '@/src/components/SplashView';
 import { usePushNotifications } from '@/src/services/pushNotifications';
 import { wsManager } from '@/src/services/wsManager';
 
+// Ignore Expo Go push notification warnings so they don't block the screen
+LogBox.ignoreLogs(['expo-notifications: Android Push notifications']);
+
 SplashScreen.preventAutoHideAsync();
 
 export const unstable_settings = { anchor: '(tabs)' };
@@ -30,7 +33,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const initialized = useRef(false);
 
   useEffect(() => {
-    if (status === 'loading' || status === 'initialising') return;
+    if (status === 'initialising') return;
 
     const inAuth    = segments[0] === '(auth)';
     const inOnboard = segments[0] === 'onboarding';
@@ -85,11 +88,13 @@ function RootLayoutInner() {
           }}
         >
           <Stack.Screen name="(auth)"        options={{ headerShown: false, animation: 'fade' }} />
+          <Stack.Screen name="auth/callback"  options={{ headerShown: false, animation: 'fade' }} />
           <Stack.Screen name="onboarding"    options={{ headerShown: false, animation: 'fade' }} />
           <Stack.Screen name="(tabs)"        options={{ headerShown: false }} />
           <Stack.Screen name="notifications" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
           <Stack.Screen name="watchlist"     options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="signal/[id]"   options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="guide"         options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="terms"         options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="privacy"       options={{ animation: 'slide_from_right' }} />
         </Stack>

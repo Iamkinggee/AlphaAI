@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable,
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -26,6 +26,17 @@ const WELCOME: Message = {
   createdAt: new Date().toISOString(),
 };
 
+/** Wrap a fetch promise in a timeout so isTyping never gets permanently stuck */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Request timed out')), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
 export default function ChatScreen() {
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
@@ -33,6 +44,9 @@ export default function ChatScreen() {
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
+
+  // Queue: hold one pending message while the AI is typing
+  const pendingRef = useRef<string | null>(null);
 
   // Create a session on first mount
   useEffect(() => {
@@ -46,30 +60,41 @@ export default function ChatScreen() {
     });
   }, []);
 
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || isTyping) return;
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+  }, []);
+
+  const sendMessage = useCallback(async (text: string) => {
+    if (!text.trim()) return;
+
+    // If AI is busy, queue the message and return
+    if (isTyping) {
+      pendingRef.current = text.trim();
+      return;
+    }
 
     setInput('');
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: 'user',
-      content: text,
+      content: text.trim(),
       createdAt: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsTyping(true);
-
-    // Scroll to bottom
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    scrollToBottom();
 
     try {
       const endpoint = sessionId
         ? API.CHAT.SESSION_DETAIL(sessionId)
         : API.CHAT.SEND;
 
-      const res = await apiClient.post<{ success: boolean; data: { response: string } }>(
-        endpoint, { content: text }
+      // 30-second timeout so isTyping never gets permanently stuck
+      const res = await withTimeout(
+        apiClient.post<{ success: boolean; data: { response: string } }>(
+          endpoint, { content: text.trim() }
+        ),
+        30_000
       );
 
       const aiMsg: Message = {
@@ -79,19 +104,36 @@ export default function ChatScreen() {
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, aiMsg]);
-    } catch {
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.message === 'Request timed out';
       const errMsg: Message = {
         id: `msg_err_${Date.now()}`,
         role: 'assistant',
-        content: '⚠️ I\'m temporarily unavailable. Please check your connection and try again.',
+        content: isTimeout
+          ? '⏱️ Response timed out. The AI is taking too long — please try again.'
+          : '⚠️ I\'m temporarily unavailable. Please check your connection and try again.',
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
       setIsTyping(false);
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+      scrollToBottom();
+
+      // If a message was queued while AI was busy, send it now
+      const queued = pendingRef.current;
+      if (queued) {
+        pendingRef.current = null;
+        // Small delay so UI settles before next request
+        setTimeout(() => sendMessage(queued), 300);
+      }
     }
-  };
+  }, [isTyping, sessionId, scrollToBottom]);
+
+  const handleSend = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+    sendMessage(text);
+  }, [input, sendMessage]);
 
   const QUICK_PROMPTS = [
     'Analyse BTC/USDT 4H',
@@ -115,7 +157,14 @@ export default function ChatScreen() {
           <Text style={styles.headerTitle}>AI Analyst</Text>
           <View style={styles.statusDot} />
         </View>
-        <Pressable style={styles.newChatBtn} onPress={() => setMessages([WELCOME])} accessibilityLabel="New chat">
+        <Pressable
+          style={styles.newChatBtn}
+          onPress={() => {
+            setMessages([WELCOME]);
+            pendingRef.current = null;
+          }}
+          accessibilityLabel="New chat"
+        >
           <Text style={styles.newChatText}>New</Text>
         </Pressable>
       </View>
@@ -136,7 +185,10 @@ export default function ChatScreen() {
           isTyping ? (
             <Animated.View entering={FadeInDown.duration(300)} style={styles.typingBubble}>
               <ActivityIndicator size="small" color={Colors.accentPrimary} />
-              <Text style={styles.typingText}>AlphaAI is thinking...</Text>
+              <Text style={styles.typingText}>AlphaAI is thinking…</Text>
+              {pendingRef.current ? (
+                <Text style={styles.queuedText}>1 message queued</Text>
+              ) : null}
             </Animated.View>
           ) : null
         }
@@ -149,7 +201,7 @@ export default function ChatScreen() {
             <Pressable
               key={prompt}
               style={styles.quickPromptChip}
-              onPress={() => { setInput(prompt); }}
+              onPress={() => sendMessage(prompt)}
               accessibilityLabel={prompt}
             >
               <Text style={styles.quickPromptText}>{prompt}</Text>
@@ -162,23 +214,26 @@ export default function ChatScreen() {
       <Animated.View entering={FadeInUp.delay(100).duration(400)} style={styles.inputBar}>
         <TextInput
           style={styles.input}
-          placeholder="Ask about market structure, signals..."
+          placeholder={isTyping ? 'Tap send to queue your message…' : 'Ask about market structure, signals...'}
           placeholderTextColor={Colors.textTertiary}
           value={input}
           onChangeText={setInput}
-          onSubmitEditing={sendMessage}
+          onSubmitEditing={handleSend}
           returnKeyType="send"
           multiline
           maxLength={500}
           accessibilityLabel="Chat input"
         />
         <Pressable
-          style={[styles.sendBtn, (!input.trim() || isTyping) && styles.sendBtnDisabled]}
-          onPress={sendMessage}
-          disabled={!input.trim() || isTyping}
+          style={[styles.sendBtn, !input.trim() && styles.sendBtnDisabled]}
+          onPress={handleSend}
+          disabled={!input.trim()}
           accessibilityLabel="Send message"
         >
-          <Text style={styles.sendIcon}>↑</Text>
+          {isTyping
+            ? <ActivityIndicator size="small" color={Colors.accentPrimary} />
+            : <Text style={styles.sendIcon}>↑</Text>
+          }
         </Pressable>
       </Animated.View>
     </KeyboardAvoidingView>
@@ -226,7 +281,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingTop: Spacing['5xl'], paddingBottom: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.divider },
   backBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.card, alignItems: 'center', justifyContent: 'center' },
-  backIcon: { fontSize: 18, color: Colors.textSecondary },
+  backIcon: { fontSize: 20, color: Colors.textSecondary },
   headerCenter: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   headerTitle: { fontSize: FontSizes.lg, fontFamily: 'Inter-SemiBold', color: Colors.textPrimary },
   statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.bullish },
@@ -236,15 +291,16 @@ const styles = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', marginBottom: Spacing.lg, alignItems: 'flex-end', gap: Spacing.sm },
   bubbleRowUser: { flexDirection: 'row-reverse' },
   aiAvatar: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.accentPrimaryDim, borderWidth: 1, borderColor: Colors.accentPrimary + '40', alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  aiAvatarText: { fontSize: 14, fontFamily: 'Inter-Bold', color: Colors.accentPrimary },
+  aiAvatarText: { fontSize: 16, fontFamily: 'Inter-Bold', color: Colors.accentPrimary },
   bubble: { maxWidth: '82%', padding: Spacing.md, borderRadius: BorderRadius.lg },
   bubbleAI: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.cardBorder, borderBottomLeftRadius: 4 },
   bubbleUser: { backgroundColor: Colors.accentPrimary + '20', borderWidth: 1, borderColor: Colors.accentPrimary + '40', borderBottomRightRadius: 4 },
   bubbleText: { fontSize: FontSizes.sm, fontFamily: 'Inter-Regular', color: Colors.textPrimary, lineHeight: 20 },
   bubbleTextUser: { color: Colors.textPrimary },
   boldText: { fontFamily: 'Inter-SemiBold', color: Colors.accentPrimary },
-  typingBubble: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingLeft: Spacing['3xl'], paddingBottom: Spacing.lg },
+  typingBubble: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, paddingLeft: Spacing['3xl'], paddingBottom: Spacing.lg, flexWrap: 'wrap' },
   typingText: { fontSize: FontSizes.xs, fontFamily: 'Inter-Regular', color: Colors.textTertiary },
+  queuedText: { fontSize: FontSizes.xs, fontFamily: 'Inter-Medium', color: Colors.accentPrimary },
   quickPromptsRow: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: Spacing.lg, gap: Spacing.sm, marginBottom: Spacing.md },
   quickPromptChip: { paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: BorderRadius.md, backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.cardBorder },
   quickPromptText: { fontSize: FontSizes.xs, fontFamily: 'Inter-Medium', color: Colors.accentPrimary },
@@ -252,5 +308,5 @@ const styles = StyleSheet.create({
   input: { flex: 1, backgroundColor: Colors.card, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: Colors.cardBorder, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, fontSize: FontSizes.sm, fontFamily: 'Inter-Regular', color: Colors.textPrimary, maxHeight: 120 },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.accentPrimary, alignItems: 'center', justifyContent: 'center' },
   sendBtnDisabled: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.cardBorder },
-  sendIcon: { fontSize: 18, color: Colors.background, fontWeight: '700' },
+  sendIcon: { fontSize: 20, color: Colors.background, fontWeight: '700' },
 });

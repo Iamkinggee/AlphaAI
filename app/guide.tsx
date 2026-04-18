@@ -1,0 +1,252 @@
+/**
+ * AlphaAI — How to Use the App
+ * Comprehensive guide covering app features and trading strategies.
+ *
+ * This page is the single source of truth for user onboarding.
+ * UPDATE THIS FILE whenever the app architecture or features change.
+ *
+ * Last updated: 2026-04-17 (Post SMC Overhaul)
+ * Current architecture:
+ *  - Monitoring Top 80 USDT Perpetual pairs (Binance Futures)
+ *  - 3-stage detection: Structure Scanner → Approach Detector → Entry Trigger
+ *  - 2.5% Early-Detection Approach Window
+ *  - Institutional Confirmation: 5M BOS / FVG Fill / Volume Gate
+ */
+import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { useRouter } from 'expo-router';
+import Animated, { FadeInDown } from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useTheme } from '@/src/contexts/ThemeContext';
+
+type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
+
+interface GuideSection {
+  id: string;
+  emoji: string;
+  title: string;
+  icon: IoniconsName;
+  items: { heading: string; body: string }[];
+}
+
+const GUIDE_SECTIONS: GuideSection[] = [
+  {
+    id: 'overview',
+    emoji: '🏛️',
+    title: 'What is AlphaAI?',
+    icon: 'information-circle-outline',
+    items: [
+      {
+        heading: 'SMC Institutional Intelligence',
+        body: 'AlphaAI is a professional-grade Smart Money Concept (SMC) signal engine. It monitors the Top 80 USDT Perpetual pairs by volume on Binance Futures, identifying structural setups where "Smart Money" (Institutional banks and funds) is likely to inject liquidity.',
+      },
+      {
+        heading: 'The 3-Stage Detection Pipeline',
+        body: 'The engine runs a predictive 3-stage lifecycle:\n\n1. Structure Scanner (H1/H4/D1) — Pre-maps high-probability Order Blocks, FVGs, and S&D zones.\n\n2. Approach Detector (Early Warning) — Fired when price is within 2.5% of a zone. Allows you to prepare BEFORE the entry.\n\n3. Entry Trigger (5M Confirmation) — Strictly confirms entry on 5-minute candle closes using micro-structure Break of Structure (BOS) and volume verification.',
+      },
+    ],
+  },
+  {
+    id: 'signals',
+    emoji: '📡',
+    title: 'Understanding Signals',
+    icon: 'pulse-outline',
+    items: [
+      {
+        heading: 'Status: Approaching (Early Warning)',
+        body: 'Price is within the 0.5%–2.5% window of a pre-mapped institutional zone. These alerts are predictive, allowing you to set up your orders before the price enters the "Kill Zone".',
+      },
+      {
+        heading: 'Status: Active (Confirmed Entry)',
+        body: 'Price has entered the zone AND a 5M SMC pattern (BOS, FVG Fill, or Engulfing) has closed with significant volume. This is your high-probability execution trigger.',
+      },
+      {
+        heading: 'Institutional Confluence (Score)',
+        body: 'Signals are scored 0–100 using weighted institutional factors:\n\n• 4H Order Block Alignment (+20)\n• HTF Trend/Bias Confluence (+15)\n• Liquidity Sweep / Induced Liquidity (+20)\n• Entry in 5M Premium/Discount (+10)\n• 5M Structural BOS Confirmation (+15)\n\nSignals below 65 are automatically rejected by the engine.',
+      },
+    ],
+  },
+  {
+    id: 'trading',
+    emoji: '💰',
+    title: 'Professional Strategy',
+    icon: 'trending-up-outline',
+    items: [
+      {
+        heading: 'Hard Invalidation Rules',
+        body: 'AlphaAI enforces strict institutional risk rules:\n\n• RR Check — TP1 must provide at least 1:2 Risk/Reward ratio. If a setup offers less, it is discarded.\n\n• Extension Guard — If price closes >2% past the far edge of a zone, the entry is "too late" and the signal is invalidated.',
+      },
+      {
+        heading: 'The Partial Profit Model',
+        body: 'Professional trading is about survival. Follow these rules when a signal hits targets:\n\n• TP1 (1:2 RR) → Close 33% of position. Move stop to breakeven (BE).\n• TP2 (1:4 RR) → Close another 33%. Trail stop to TP1.\n• TP3 (Target) → Close remaining. Full capture.',
+      },
+    ],
+  },
+  {
+    id: 'features',
+    emoji: '🔧',
+    title: 'App Ecosystem',
+    icon: 'apps-outline',
+    items: [
+      {
+        heading: 'Real-Time Pulse',
+        body: 'The dashboard displays live BTC Dominance, Fear & Greed, and real-time price ticks for all 80 monitored pairs. The engine scans the entire universe every 60 seconds.',
+      },
+      {
+        heading: 'AI Market Intelligence',
+        body: 'Use the AI Chat to verify setups. The AI analyzes live chart data, including ATR-based volatility, recent BOS events, and volume profile to give you a "Second Opinion".',
+      },
+    ],
+  },
+  {
+    id: 'tips',
+    emoji: '🧠',
+    title: 'Risk & Mindset',
+    icon: 'bulb-outline',
+    items: [
+      {
+        heading: 'The 1% Rule',
+        body: 'Never risk more than 1% of your account capital on any single setup. AlphaAI is designed for consistent equity growth, not "get rich quick" gambling.',
+      },
+      {
+        heading: 'Verification is Key',
+        body: 'AlphaAI signals provide the "Where" and the "When". Your job as a trader is to verify the "How"—ensure the 5M confirmation candle looks strong and has institutional volume.',
+      },
+    ],
+  },
+];
+
+export default function HowToUseScreen() {
+  const { theme } = useTheme();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: theme.border }]}>
+        <Pressable
+          onPress={() => router.back()}
+          style={[styles.backBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <Ionicons name="arrow-back" size={18} color={theme.textPrimary} />
+        </Pressable>
+        <View style={{ flex: 1, marginLeft: 14 }}>
+          <Text style={[styles.headerTitle, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>
+            How to Use AlphaAI
+          </Text>
+          <Text style={[styles.headerSub, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+            Institutional SMC Guide · 80 Pairs
+          </Text>
+        </View>
+      </View>
+
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <Animated.View entering={FadeInDown.duration(400)} style={styles.hero}>
+          <View style={[styles.heroIconWrap, { backgroundColor: theme.accentPrimaryDim, borderColor: theme.accentPrimary + '30' }]}>
+            <Ionicons name="school-outline" size={36} color={theme.accentPrimary} />
+          </View>
+          <Text style={[styles.heroTitle, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>
+            Master Institutional SMC
+          </Text>
+          <Text style={[styles.heroBody, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+            Learn how AlphaAI monitors 80 top markets using high-probability structure mapping and multi-stage confirmation.
+          </Text>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(60).duration(400)} style={styles.statsRow}>
+          {[
+            { label: 'Markets', value: '80', icon: 'globe-outline' as IoniconsName },
+            { label: 'Detection', value: '3-Stage', icon: 'flash-outline' as IoniconsName },
+            { label: 'Scan Cycle', value: '60s', icon: 'refresh-outline' as IoniconsName },
+          ].map((stat, i) => (
+            <View key={i} style={[styles.statCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <Ionicons name={stat.icon} size={16} color={theme.accentPrimary} />
+              <Text style={[styles.statValue, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>{stat.value}</Text>
+              <Text style={[styles.statLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>{stat.label}</Text>
+            </View>
+          ))}
+        </Animated.View>
+
+        {GUIDE_SECTIONS.map((section, index) => (
+          <SectionCard key={section.id} section={section} index={index} />
+        ))}
+
+        <Animated.View entering={FadeInDown.delay(500).duration(400)} style={styles.disclaimer}>
+          <Ionicons name="warning-outline" size={16} color={theme.textTertiary} />
+          <Text style={[styles.disclaimerText, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+            AlphaAI signals are based on institutional structural mapping. All trading involves risk. Use signals in conjunction with your own analysis and strict risk management protocols.
+          </Text>
+        </Animated.View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function SectionCard({ section, index }: { section: GuideSection; index: number }) {
+  const { theme } = useTheme();
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(100 + index * 60).duration(400)}
+      style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+    >
+      <View style={styles.sectionHeader}>
+        <View style={[styles.sectionIconWrap, { backgroundColor: theme.accentPrimaryDim }]}>
+          <Ionicons name={section.icon} size={20} color={theme.accentPrimary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.sectionEmoji]}>{section.emoji}</Text>
+          <Text style={[styles.sectionTitle, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>
+            {section.title}
+          </Text>
+        </View>
+      </View>
+
+      {section.items.map((item, i) => (
+        <View
+          key={i}
+          style={[
+            styles.itemWrap,
+            i < section.items.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.divider },
+          ]}
+        >
+          <Text style={[styles.itemHeading, { color: theme.accentPrimary, fontFamily: 'Inter-SemiBold' }]}>
+            {item.heading}
+          </Text>
+          <Text style={[styles.itemBody, { color: theme.textSecondary, fontFamily: 'Inter-Regular' }]}>
+            {item.body}
+          </Text>
+        </View>
+      ))}
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container:      { flex: 1 },
+  header:         { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
+  backBtn:        { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  headerTitle:    { fontSize: 22 },
+  headerSub:      { fontSize: 13, marginTop: 2 },
+  scroll:         { paddingHorizontal: 16, paddingTop: 20 },
+  hero:           { alignItems: 'center', marginBottom: 24 },
+  heroIconWrap:   { width: 80, height: 80, borderRadius: 40, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  heroTitle:      { fontSize: 26, marginBottom: 8 },
+  heroBody:       { fontSize: 16, textAlign: 'center', lineHeight: 22, paddingHorizontal: 12 },
+  statsRow:       { flexDirection: 'row', gap: 10, marginBottom: 24 },
+  statCard:       { flex: 1, alignItems: 'center', gap: 4, borderRadius: 14, borderWidth: 1, paddingVertical: 14 },
+  statValue:      { fontSize: 20 },
+  statLabel:      { fontSize: 12 },
+  sectionCard:    { borderRadius: 18, borderWidth: 1, marginBottom: 16, overflow: 'hidden' },
+  sectionHeader:  { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, paddingBottom: 10 },
+  sectionIconWrap:{ width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  sectionEmoji:   { fontSize: 16, marginBottom: 2 },
+  sectionTitle:   { fontSize: 20 },
+  itemWrap:       { paddingHorizontal: 16, paddingVertical: 14 },
+  itemHeading:    { fontSize: 17, marginBottom: 6 },
+  itemBody:       { fontSize: 15, lineHeight: 21 },
+  disclaimer:     { flexDirection: 'row', gap: 10, paddingHorizontal: 8, paddingVertical: 20, alignItems: 'flex-start' },
+  disclaimerText: { flex: 1, fontSize: 14, lineHeight: 18 },
+});

@@ -140,7 +140,7 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   skipBtn: { position: 'absolute', right: 24, zIndex: 10 },
-  skipText: { fontFamily: 'Inter-Medium', fontSize: 15 },
+  skipText: { fontFamily: 'Inter-Medium', fontSize: 17 },
   slide: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -157,14 +157,14 @@ const styles = StyleSheet.create({
     marginBottom: 48,
   },
   title: {
-    fontSize: 32,
+    fontSize: 34,
     fontFamily: 'Inter-Bold',
     textAlign: 'center',
     lineHeight: 40,
     marginBottom: 20,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontFamily: 'Inter-Regular',
     textAlign: 'center',
     lineHeight: 26,
@@ -185,5 +185,5 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     borderRadius: 16,
   },
-  ctaText: { fontFamily: 'Inter-Bold', fontSize: 17, color: '#000' },
+  ctaText: { fontFamily: 'Inter-Bold', fontSize: 19, color: '#000' },
 });
