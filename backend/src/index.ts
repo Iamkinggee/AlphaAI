@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -71,7 +71,16 @@ app.use((_req: Request, res: Response) => {
 });
 
 // ── Global Error Handler ──────────────────────────────────────────────
-app.use((err: Error, _req: Request, res: Response) => {
+app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+  // body-parser / express.json parse failures should be 400, not 500
+  if (err instanceof SyntaxError && err.type === 'entity.parse.failed') {
+    res.status(400).json({ success: false, error: 'Malformed JSON request body' });
+    return;
+  }
+  if (typeof err.status === 'number' && err.status >= 400 && err.status < 500) {
+    res.status(err.status).json({ success: false, error: err.message || 'Bad request' });
+    return;
+  }
   console.error('💥 Unhandled error:', err);
   res.status(500).json({ success: false, error: 'Internal server error' });
 });
