@@ -30,12 +30,14 @@ class AlphaAIWebSocket {
   private reconnectDelay = 3000;
   private maxRetries = 10;
   private retries = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private handlers: Map<WsEventType, EventHandler[]> = new Map();
   private subscribedPairs: string[] = [];
   private userId: string | null = null;
   private isConnected = false;
   private isConnecting = false;
+  private connectSeq = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -43,24 +45,33 @@ class AlphaAIWebSocket {
 
   /** Connect to the backend WebSocket server. */
   connect(userId?: string): void {
-    if (this.isConnected || this.isConnecting) return;
+    if (this.isConnected || this.isConnecting || this.reconnectTimer) return;
     this.userId = userId ?? null;
     this._open();
   }
 
   private _open(): void {
     if (this.isConnecting) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return; // already have a live socket attempt
+    }
     this.isConnecting = true;
+    const seq = ++this.connectSeq;
 
     try {
       console.log(`🔌 [WS Client] Connecting to ${this.url}/ws...`);
       this.ws = new WebSocket(this.url + '/ws');
 
       this.ws.onopen = () => {
+        if (seq !== this.connectSeq) return; // stale socket event
         console.log('🔌 [WS Client] Connected successfully');
         this.isConnected = true;
         this.isConnecting = false;
         this.retries = 0;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
 
         // Authenticate and re-subscribe
         if (this.userId) {
@@ -78,6 +89,7 @@ class AlphaAIWebSocket {
       };
 
       this.ws.onmessage = (event: MessageEvent) => {
+        if (seq !== this.connectSeq) return; // stale socket event
         try {
           const msg = JSON.parse(event.data as string) as WsEvent;
           const handlers = this.handlers.get(msg.type) ?? [];
@@ -86,10 +98,12 @@ class AlphaAIWebSocket {
       };
 
       this.ws.onclose = (e) => {
+        if (seq !== this.connectSeq) return; // stale socket event
         const wasConnected = this.isConnected;
         this.isConnected = false;
         this.isConnecting = false;
         this._clearPing();
+        this.ws = null;
         
         if (wasConnected) {
           console.log(`🔌 [WS Client] Disconnected (Code: ${e.code}, Reason: ${e.reason || 'none'})`);
@@ -98,6 +112,7 @@ class AlphaAIWebSocket {
       };
 
       this.ws.onerror = (err: any) => {
+        if (seq !== this.connectSeq) return; // stale socket event
         this.isConnecting = false;
         // In React Native, err might be an object with limited properties
         console.warn('[WS Client] Socket error details:', {
@@ -114,6 +129,7 @@ class AlphaAIWebSocket {
   }
 
   private _scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
     if (this.retries >= this.maxRetries) {
       console.warn('[WS Client] Max reconnect attempts reached');
       return;
@@ -121,7 +137,10 @@ class AlphaAIWebSocket {
     this.retries++;
     const delay = this.reconnectDelay * Math.min(this.retries, 4); // exponential cap
     console.log(`[WS Client] Reconnecting in ${delay}ms (attempt ${this.retries})`);
-    setTimeout(() => this._open(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this._open();
+    }, delay);
   }
 
   private _clearPing(): void {
@@ -161,7 +180,10 @@ class AlphaAIWebSocket {
   /** Disconnect cleanly. */
   disconnect(): void {
     this._clearPing();
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    this.connectSeq++; // invalidate any in-flight handlers
     this.ws?.close();
+    this.ws = null;
     this.isConnected = false;
     this.retries = this.maxRetries; // prevent reconnect
   }

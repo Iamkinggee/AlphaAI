@@ -121,8 +121,9 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
       console.log(`📊 [Lifecycle] ${signal.pair} ${signal.status} → ${newStatus} @ $${currentPrice}`);
 
       // Broadcast to all connected clients
+      const wsType = newStatus === 'stopped' ? 'signal_stopped' : 'signal_tp_hit';
       broadcastAll({
-        type: newStatus === 'stopped' ? 'signal_stopped' : 'signal_tp_hit',
+        type: wsType,
         timestamp: Date.now(),
         data: {
           signalId: signal.id,

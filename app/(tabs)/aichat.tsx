@@ -2,7 +2,7 @@
  * AlphaAI — AI Chat Tab
  * Full AI analyst chat powered by ChatStore + Groq AI via backend.
  */
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable,
   FlatList, KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -12,6 +12,7 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/src/contexts/ThemeContext';
 import { useChatStore } from '@/src/store/useChatStore';
+import { useSignalStore } from '@/src/store/useSignalStore';
 
 const QUICK_PROMPTS = [
   'Analyse BTC/USDT 4H setup',
@@ -27,10 +28,16 @@ export default function AIChatScreen() {
 
   const messages  = useChatStore((s) => s.messages);
   const isLoading = useChatStore((s) => s.isLoading);
+  const error       = useChatStore((s) => s.error);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const clearChat   = useChatStore((s) => s.clearChat);
+  const clearError  = useChatStore((s) => s.clearError);
 
   const [input, setInput] = useState('');
+
+  useEffect(() => {
+    useSignalStore.getState().fetchSignals().catch(() => {});
+  }, []);
   const listRef = useRef<FlatList>(null);
 
   const handleSend = useCallback(async (text?: string) => {
@@ -71,6 +78,17 @@ export default function AIChatScreen() {
           <Ionicons name="add" size={18} color={theme.textSecondary} />
         </Pressable>
       </View>
+
+      {error ? (
+        <Pressable
+          onPress={clearError}
+          style={[styles.errorBanner, { backgroundColor: theme.card, borderColor: theme.border }]}
+          accessibilityLabel="Dismiss error"
+        >
+          <Text style={[styles.errorText, { color: theme.textSecondary, fontFamily: 'Inter-Regular' }]}>{error}</Text>
+          <Ionicons name="close-circle" size={18} color={theme.textTertiary} />
+        </Pressable>
+      ) : null}
 
       {/* ── Messages ────────────────────────────────────────────────── */}
       <FlatList
@@ -196,6 +214,8 @@ const styles = StyleSheet.create({
   headerTitle:      { fontSize: 20 },
   headerOnline:     { fontSize: 14, marginTop: 1 },
   newChatBtn:       { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
+  errorBanner:      { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
+  errorText:        { flex: 1, fontSize: 14, lineHeight: 19 },
   messagesList:     { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 16, flexGrow: 1 },
   messageRow:       { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginBottom: 12 },
   messageRowUser:   { flexDirection: 'row-reverse' },

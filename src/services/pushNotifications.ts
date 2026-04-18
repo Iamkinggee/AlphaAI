@@ -44,12 +44,29 @@ interface SignalEventData {
   price?: number;
   direction?: string;
   timeframe?: string;
+  entryZone?: { low: number; high: number };
+  stopLoss?: number;
+  takeProfit1?: number;
+  takeProfit2?: number;
+  takeProfit3?: number;
+  rrTp1?: number;
 }
 
 function buildApproachingNotification(data: SignalEventData): any {
+  const entry = data.entryZone
+    ? `${formatNotifPrice(data.entryZone.low)}–${formatNotifPrice(data.entryZone.high)}`
+    : null;
+  const sl = typeof data.stopLoss === 'number' ? formatNotifPrice(data.stopLoss) : null;
+  const tp1 = typeof data.takeProfit1 === 'number' ? formatNotifPrice(data.takeProfit1) : null;
+  const rr1 = typeof data.rrTp1 === 'number' ? `1:${data.rrTp1.toFixed(1)}` : null;
+  const planLine = entry && sl && tp1
+    ? `Entry ${entry} · SL ${sl} · TP1 ${tp1}${rr1 ? ` (${rr1})` : ''}`
+    : null;
   return {
     title: `📡 ${data.pair ?? 'Signal'} — Approaching Zone`,
-    body: `Price approaching entry zone${data.score ? ` · Confluence: ${data.score}/100` : ''}${data.timeframe ? ` · ${data.timeframe}` : ''}`,
+    body: planLine
+      ? `${planLine}${data.score ? ` · Score ${data.score}/100` : ''}${data.timeframe ? ` · ${data.timeframe}` : ''}`
+      : `Price approaching entry zone${data.score ? ` · Confluence: ${data.score}/100` : ''}${data.timeframe ? ` · ${data.timeframe}` : ''}`,
     sound: true,
     priority: Notifications?.AndroidNotificationPriority?.HIGH ?? 'high',
     data: { type: 'approaching', signalId: data.signalId, pair: data.pair },
@@ -186,7 +203,9 @@ export function usePushNotifications() {
             type: 'approaching',
             priority: 'critical',
             title: `${data.pair ?? 'Signal'} — Approaching Zone`,
-            body: `Price approaching entry zone${data.score ? ` · Score: ${data.score}` : ''}`,
+            body: data.entryZone && typeof data.stopLoss === 'number' && typeof data.takeProfit1 === 'number'
+              ? `Entry ${formatNotifPrice(data.entryZone.low)}–${formatNotifPrice(data.entryZone.high)} · SL ${formatNotifPrice(data.stopLoss)} · TP1 ${formatNotifPrice(data.takeProfit1)}${typeof data.rrTp1 === 'number' ? ` (1:${data.rrTp1.toFixed(1)})` : ''}${data.score ? ` · Score ${data.score}` : ''}`
+              : `Price approaching entry zone${data.score ? ` · Score: ${data.score}` : ''}`,
             pair: data.pair,
             signalId: data.signalId,
           });

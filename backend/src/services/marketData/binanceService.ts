@@ -93,8 +93,11 @@ export async function fetchTopFuturesPairs(limit = 80): Promise<{ pair: string; 
     const pairs = data
       .filter(t => {
         const isUsdt = t.symbol && t.symbol.endsWith('USDT');
+        // Keep only standard Binance futures symbols (A-Z/0-9 + USDT)
+        // to avoid malformed or non-standard market entries from noisy feeds.
+        const isStandardSymbol = /^[A-Z0-9]+USDT$/.test(t.symbol ?? '');
         const hasVol = parseFloat(t.quoteVolume || '0') > 0;
-        return isUsdt && hasVol;
+        return isUsdt && isStandardSymbol && hasVol;
       })
       .sort((a, b) => {
         const volA = parseFloat(a.quoteVolume || '0');

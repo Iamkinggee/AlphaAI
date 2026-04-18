@@ -10,6 +10,8 @@ import { FontSizes } from '@/src/constants/fonts';
 import { Spacing, BorderRadius } from '@/src/constants/spacing';
 import { apiClient } from '@/src/services/apiClient';
 import { API } from '@/src/constants/api';
+import { useSignalStore } from '@/src/store/useSignalStore';
+import { buildSignalsAppContext } from '@/src/utils/chatSignalContext';
 
 interface Message {
   id: string;
@@ -43,21 +45,41 @@ export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   // Queue: hold one pending message while the AI is typing
   const pendingRef = useRef<string | null>(null);
 
-  // Create a session on first mount
-  useEffect(() => {
-    apiClient.post<{ success: boolean; data: { id: string } }>(API.CHAT.NEW_SESSION, {
+  const ensureSession = useCallback(async (): Promise<string> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    const res = await apiClient.post<{ success: boolean; data: { id: string } }>(API.CHAT.NEW_SESSION, {
       title: 'Market Analysis',
-    }).then((res) => {
-      if (res.success) setSessionId(res.data.id);
-    }).catch(() => {
-      // Dev fallback — generate a local session ID
-      setSessionId(`local_${Date.now()}`);
     });
+    const id = res?.data?.id;
+    if (!id) throw new Error('Could not create chat session');
+    sessionIdRef.current = id;
+    setSessionId(id);
+    return id;
+  }, []);
+
+  // Create a session on first mount (speeds up first send)
+  useEffect(() => {
+    apiClient
+      .post<{ success: boolean; data: { id: string } }>(API.CHAT.NEW_SESSION, {
+        title: 'Market Analysis',
+      })
+      .then((res) => {
+        if (res.success && res.data?.id) {
+          sessionIdRef.current = res.data.id;
+          setSessionId(res.data.id);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    useSignalStore.getState().fetchSignals().catch(() => {});
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -85,22 +107,28 @@ export default function ChatScreen() {
     scrollToBottom();
 
     try {
-      const endpoint = sessionId
-        ? API.CHAT.SESSION_DETAIL(sessionId)
-        : API.CHAT.SEND;
+      const sid = await ensureSession();
+      const appContext = buildSignalsAppContext(useSignalStore.getState().signals);
 
-      // 30-second timeout so isTyping never gets permanently stuck
       const res = await withTimeout(
-        apiClient.post<{ success: boolean; data: { response: string } }>(
-          endpoint, { content: text.trim() }
-        ),
+        apiClient.post<{
+          success: boolean;
+          data: { message?: { content?: string }; response?: string };
+        }>(API.CHAT.SESSION_DETAIL(sid), {
+          content: text.trim(),
+          appContext,
+        }),
         30_000
       );
 
+      const raw =
+        res.data?.message?.content?.trim() ||
+        (typeof res.data?.response === 'string' ? res.data.response.trim() : '') ||
+        '';
       const aiMsg: Message = {
         id: `msg_ai_${Date.now()}`,
         role: 'assistant',
-        content: res.data?.response ?? 'I encountered an error. Please try again.',
+        content: raw || 'I encountered an error. Please try again.',
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, aiMsg]);
@@ -127,7 +155,7 @@ export default function ChatScreen() {
         setTimeout(() => sendMessage(queued), 300);
       }
     }
-  }, [isTyping, sessionId, scrollToBottom]);
+  }, [isTyping, ensureSession, scrollToBottom]);
 
   const handleSend = useCallback(() => {
     const text = input.trim();
@@ -162,6 +190,8 @@ export default function ChatScreen() {
           onPress={() => {
             setMessages([WELCOME]);
             pendingRef.current = null;
+            sessionIdRef.current = null;
+            setSessionId(null);
           }}
           accessibilityLabel="New chat"
         >

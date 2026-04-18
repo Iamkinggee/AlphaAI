@@ -76,9 +76,9 @@ export function ApproachingCard({ signal, index = 0 }: ApproachingCardProps) {
             </View>
             <View style={styles.zoneDivider} />
             <View style={styles.zoneItem}>
-              <Text style={styles.zoneLabel}>TP2 Target</Text>
-              <Text style={[styles.zoneValue, { color: Colors.bullish }]}>
-                {signal.takeProfit2.priceFormatted}
+              <Text style={styles.zoneLabel}>Stop Loss</Text>
+              <Text style={[styles.zoneValue, { color: Colors.bearish }]}>
+                {signal.stopLossFormatted}
               </Text>
             </View>
             <View style={styles.zoneDivider} />
@@ -86,6 +86,30 @@ export function ApproachingCard({ signal, index = 0 }: ApproachingCardProps) {
               <Text style={styles.zoneLabel}>Best R:R</Text>
               <Text style={[styles.zoneValue, { color: Colors.info }]}>
                 {signal.takeProfit2.rr}
+              </Text>
+            </View>
+          </View>
+
+          {/* Targets row */}
+          <View style={styles.zoneRow}>
+            <View style={styles.zoneItem}>
+              <Text style={styles.zoneLabel}>TP1</Text>
+              <Text style={[styles.zoneValue, { color: Colors.bullish }]}>
+                {signal.takeProfit1.priceFormatted} ({signal.takeProfit1.rr})
+              </Text>
+            </View>
+            <View style={styles.zoneDivider} />
+            <View style={styles.zoneItem}>
+              <Text style={styles.zoneLabel}>TP2</Text>
+              <Text style={[styles.zoneValue, { color: Colors.bullish }]}>
+                {signal.takeProfit2.priceFormatted} ({signal.takeProfit2.rr})
+              </Text>
+            </View>
+            <View style={styles.zoneDivider} />
+            <View style={styles.zoneItem}>
+              <Text style={styles.zoneLabel}>TP3</Text>
+              <Text style={[styles.zoneValue, { color: Colors.bullish }]}>
+                {signal.takeProfit3.priceFormatted} ({signal.takeProfit3.rr})
               </Text>
             </View>
           </View>

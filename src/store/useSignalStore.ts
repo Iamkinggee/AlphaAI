@@ -86,11 +86,12 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
 
   // ─── Actions ──────────────────────────────────────────────────────
   fetchSignals: async () => {
+    if (get().isLoading) return;
     set({ isLoading: true, error: null });
     try {
       const res = await apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.LIST);
       const rawData = res.data ?? [];
-      const data = rawData.map(normaliseSignal);
+      const data = rawData.map((s) => (s?.entryZone ? (s as Signal) : normaliseSignal(s)));
       
       console.log(`📡 [SignalStore] Loaded ${data.length} signals (Cached: ${!!(res as any).cached})`);
       set({
@@ -111,7 +112,7 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
     try {
       const res = await apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.HISTORY);
       const rawData = res.data ?? [];
-      const data = rawData.map(normaliseSignal);
+      const data = rawData.map((s) => (s?.entryZone ? (s as Signal) : normaliseSignal(s)));
       set({ historySignals: data, isLoadingHistory: false });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch history';
@@ -121,11 +122,12 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
   },
 
   refreshSignals: async () => {
+    if (get().isRefreshing || get().isLoading) return;
     set({ isRefreshing: true, error: null });
     try {
       const res = await apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.LIST);
       const rawData = res.data ?? [];
-      const data = rawData.map(normaliseSignal);
+      const data = rawData.map((s) => (s?.entryZone ? (s as Signal) : normaliseSignal(s)));
       set({
         signals: data,
         isRefreshing: false,

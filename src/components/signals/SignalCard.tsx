@@ -100,10 +100,19 @@ export function SignalCard({ signal, index = 0, onDelete }: SignalCardProps) {
           {/* ── Price levels ───────────────────────────────────────── */}
           <View style={[styles.levels, { backgroundColor: theme.surface + '80', borderColor: theme.border }]}>
             <View style={styles.levelItem}>
-              <Text style={[styles.levelLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>Entry</Text>
-              <Text style={[styles.levelValue, { color: theme.textPrimary, fontFamily: 'Inter-SemiBold' }]}>
-                {signal.entryZone.lowFormatted}
+              <Text style={[styles.levelLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+                {signal.status === 'approaching' ? 'Entry Zone' : 'Entry'}
               </Text>
+              <Text style={[styles.levelValue, { color: theme.textPrimary, fontFamily: 'Inter-SemiBold' }]}>
+                {signal.status === 'approaching'
+                  ? `${signal.entryZone.lowFormatted} – ${signal.entryZone.highFormatted}`
+                  : signal.entryZone.lowFormatted}
+              </Text>
+              {signal.status === 'approaching' && signal.distanceFormatted !== '—' ? (
+                <Text style={[styles.levelHint, { color: theme.approaching, fontFamily: 'Inter-Medium' }]}>
+                  {signal.distanceFormatted} away
+                </Text>
+              ) : null}
             </View>
             <View style={[styles.levelDivider, { backgroundColor: theme.border }]} />
             <View style={styles.levelItem}>
@@ -172,6 +181,7 @@ const styles = StyleSheet.create({
   levelItem:    { flex: 1 },
   levelLabel:   { fontSize: 12, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },
   levelValue:   { fontSize: 15 },
+  levelHint:    { fontSize: 12, marginTop: 4 },
   levelDivider: { width: 1, marginVertical: 2 },
   footer:       { flexDirection: 'row', alignItems: 'center', gap: 10 },
   time:         { flex: 1, fontSize: 14, opacity: 0.7 },

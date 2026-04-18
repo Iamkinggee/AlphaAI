@@ -1,8 +1,12 @@
 /**
  * AlphaAI — Chat Store (Zustand)
- * Manages AI chat session and message history.
+ * Persists conversation via backend /api/chat (Groq). Injects live signal context each turn.
  */
 import { create } from 'zustand';
+import { apiClient, ApiError } from '@/src/services/apiClient';
+import { API } from '@/src/constants/api';
+import { useSignalStore } from '@/src/store/useSignalStore';
+import { buildSignalsAppContext } from '@/src/utils/chatSignalContext';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
@@ -25,38 +29,70 @@ interface ChatStore {
   clearError: () => void;
 }
 
-// Canned responses for dev phase
-const AI_RESPONSES: Record<string, string> = {
-  default: "I'm analysing your query. The signal detection engine is scanning 24 pairs across 4H and 1H timeframes. Would you like me to explain the current BTC/USDT setup or run a confluence check on another pair?",
-  btc: "**BTC/USDT 4H Analysis:**\n\nCurrent price is approaching the 4H Demand OB at $42,100–$42,400. Confluence score: **84/100**.\n\n✅ 4H Order Block\n✅ Nested FVG\n✅ Price in Discount Zone\n✅ 1D trend bullish\n\nWith a score above the 70-point threshold, this setup qualifies as high probability. Stop loss at $41,774 gives a clean 1:3.2 RR to TP2.",
-  signal: "Currently tracking **6 signals**:\n\n• 2 Approaching (BTC, ETH)\n• 1 Active (SOL — +4.8%)\n• 1 TP1 Hit (DOGE)\n• 2 Pending (LINK, AVAX)\n\nThe highest scoring setup right now is **SOL/USDT at 91/100** — already in the demand zone.",
+const WELCOME_ID = 'msg_welcome_static';
+
+const welcomeMessage: ChatMessage = {
+  id: WELCOME_ID,
+  role: 'assistant',
+  content:
+    '👋 Welcome to **AlphaAI**. Ask about SMC concepts, a specific pair, or your **current signals** — each reply uses Groq on the server and includes a snapshot of what is loaded in your Signals tab.',
+  createdAt: new Date().toISOString(),
 };
 
-function getAIResponse(userMessage: string): string {
-  const lower = userMessage.toLowerCase();
-  if (lower.includes('btc') || lower.includes('bitcoin')) return AI_RESPONSES.btc;
-  if (lower.includes('signal') || lower.includes('setup')) return AI_RESPONSES.signal;
-  return AI_RESPONSES.default;
+let sessionCreatePromise: Promise<string> | null = null;
+
+async function ensureChatSession(get: () => ChatStore, set: (partial: Partial<ChatStore>) => void): Promise<string> {
+  const existing = get().sessionId;
+  if (existing) return existing;
+  if (sessionCreatePromise) return sessionCreatePromise;
+
+  sessionCreatePromise = (async () => {
+    const res = await apiClient.post<{ success?: boolean; data?: { id: string } }>(
+      API.CHAT.NEW_SESSION,
+      { title: 'AlphaAI Chat' }
+    );
+    const id = res?.data?.id;
+    if (!id) throw new Error('Could not create chat session');
+    set({ sessionId: id });
+    return id;
+  })();
+
+  try {
+    return await sessionCreatePromise;
+  } finally {
+    sessionCreatePromise = null;
+  }
+}
+
+function chatErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const body = err.body as { error?: string } | undefined;
+    if (err.statusCode === 401) {
+      return 'Sign in required for AI chat (or use dev mode with a dev session token).';
+    }
+    if (err.statusCode === 503) {
+      return body?.error ?? 'AI is unavailable — set GROQ_API_KEY on the backend.';
+    }
+    return body?.error ?? err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return 'Message failed. Please check your connection.';
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
-  messages: [
-    {
-      id: 'msg_sys_001',
-      role: 'assistant',
-      content: "👋 Welcome to **AlphaAI**. I'm your institutional signal analyst.\n\nI can help you:\n• Explain current signals and setups\n• Run confluence checks on specific pairs\n• Analyse your journal performance\n• Scan for new SMC structures\n\nWhat would you like to explore?",
-      createdAt: new Date().toISOString(),
-    },
-  ],
+  messages: [welcomeMessage],
   isLoading: false,
   error: null,
-  sessionId: `session_${Date.now()}`,
+  sessionId: null,
 
   sendMessage: async (content) => {
+    const trimmed = content.trim();
+    if (!trimmed) return;
+
     const userMessage: ChatMessage = {
       id: `msg_${Date.now()}`,
       role: 'user',
-      content,
+      content: trimmed,
       createdAt: new Date().toISOString(),
     };
 
@@ -71,32 +107,48 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => ({
       messages: [...state.messages, userMessage, placeholder],
       isLoading: true,
+      error: null,
     }));
 
     try {
-      // TODO: Replace with real streaming API → POST /chat/message
-      await new Promise((r) => setTimeout(r, 1200));
-      const aiContent = getAIResponse(content);
+      const sessionId = await ensureChatSession(get, set);
+      const appContext = buildSignalsAppContext(useSignalStore.getState().signals);
+
+      const res = await apiClient.post<{
+        success?: boolean;
+        data?: { message?: { content?: string }; response?: string };
+      }>(API.CHAT.SESSION_DETAIL(sessionId), {
+        content: trimmed,
+        appContext,
+      });
+
+      const text =
+        res?.data?.message?.content?.trim() ||
+        (typeof res?.data?.response === 'string' ? res.data.response.trim() : '') ||
+        '';
+
+      if (!text) throw new Error('Empty AI response');
 
       set((state) => ({
         messages: state.messages.map((m) =>
-          m.id === placeholder.id ? { ...m, content: aiContent, isStreaming: false } : m
+          m.id === placeholder.id ? { ...m, content: text, isStreaming: false } : m
         ),
         isLoading: false,
       }));
-    } catch {
+    } catch (err) {
       set((state) => ({
         messages: state.messages.filter((m) => m.id !== placeholder.id),
         isLoading: false,
-        error: 'Message failed. Please check your connection.',
+        error: chatErrorMessage(err),
       }));
     }
   },
 
   clearChat: () =>
     set({
-      messages: [],
-      sessionId: `session_${Date.now()}`,
+      messages: [welcomeMessage],
+      sessionId: null,
+      error: null,
     }),
 
   clearError: () => set({ error: null }),

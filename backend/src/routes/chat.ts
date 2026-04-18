@@ -7,14 +7,29 @@
  *
  * Auth: Extracts user ID from the Supabase JWT (Authorization: Bearer <token>).
  * Dev tokens (dev_*) are mapped to a stable dev user ID so local dev works.
+ *
+ * When Supabase env is not set, sessions are stored in-memory (dev only).
  */
 import { Router, Request, Response } from 'express';
+import { config } from '../config';
 import { getSupabaseClient } from '../services/supabaseClient';
-import { generateAIResponse } from '../services/openaiService';
+import { generateAIResponse, GroqNotConfiguredError, type ChatMessage } from '../services/openaiService';
+import {
+  memoryAppendMessage,
+  memoryCreateSession,
+  memoryGetMessages,
+  memoryGetSession,
+  memoryHistoryForAi,
+  memoryListSessions,
+} from '../services/chatMemoryStore';
 
 const router = Router();
 
 const DEV_USER_ID = 'dev_user_001';
+
+function isMemoryMode(): boolean {
+  return !config.SUPABASE_URL || !config.SUPABASE_SERVICE_ROLE_KEY;
+}
 
 /**
  * Extract user ID from the request.
@@ -23,7 +38,6 @@ const DEV_USER_ID = 'dev_user_001';
  * 3. Falls back to the x-user-id header (legacy support).
  */
 async function getUserId(req: Request): Promise<string | null> {
-  // Legacy header support
   const headerUserId = req.headers['x-user-id'] as string | undefined;
   if (headerUserId) return headerUserId;
 
@@ -32,12 +46,10 @@ async function getUserId(req: Request): Promise<string | null> {
 
   const token = authHeader.slice(7);
 
-  // Dev mode tokens — return a stable dev user ID
   if (token.startsWith('dev_')) {
     return DEV_USER_ID;
   }
 
-  // Validate real Supabase token
   try {
     const db = getSupabaseClient();
     const { data, error } = await db.auth.getUser(token);
@@ -48,31 +60,8 @@ async function getUserId(req: Request): Promise<string | null> {
   }
 }
 
-// System prompt for the AI trading analyst
-const SYSTEM_PROMPT = `You are AlphaAI, an institutional-grade crypto trading analyst specialising in Smart Money Concepts (SMC).
-
-Your expertise includes:
-- Order Blocks (OB): Identifying institutional candles before significant moves
-- Fair Value Gaps (FVG): Imbalances price is likely to return to fill
-- Supply & Demand Zones (S&D): Institutional accumulation/distribution areas
-- Liquidity Pools: Equal highs/lows where stop hunts occur (BSL/SSL)
-- Market Structure: HH, HL, LH, LL, CHoCH, BOS analysis
-- Confluence scoring: Weighting multiple factors for high-probability setups
-
-RESPONSE RULES — follow these strictly:
-- NEVER start a response with phrases like "I'm analysing your query", "Let me analyse", "I'll now", "Certainly!", or any preamble. Jump straight into the answer.
-- NEVER narrate what you are about to do. Just do it.
-- Be concise, structured, and data-driven.
-- Use markdown headers (**bold**) for structure.
-- Always end an analysis with: "⚠️ Not financial advice. Manage risk appropriately."
-- Never give financial advice or make guarantees about price movements.
-
-When analysing a signal or chart, always:
-1. Identify the dominant trend on the higher timeframe (HTF)
-2. Look for a structural shift (CHoCH or BOS)
-3. Find the nearest OB/FVG/S&D zone in the trade direction
-4. Calculate R:R before entry (minimum 1:2)
-5. State clear invalidation level`;
+/** Stored in DB as a bootstrap row; Groq uses the canonical prompt in openaiService. */
+const SESSION_BOOTSTRAP_MARKDOWN = `AlphaAI chat session — SMC / signals context enabled.`;
 
 /**
  * POST /chat/sessions — Create a new session
@@ -81,9 +70,15 @@ router.post('/sessions', async (req: Request, res: Response) => {
   const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
-  const { title = 'New Analysis', signalContextId } = req.body;
-  const db = getSupabaseClient();
+  const { title = 'New Analysis', signalContextId: _signalContextId } = req.body;
 
+  if (isMemoryMode()) {
+    const session = memoryCreateSession(userId, title, SESSION_BOOTSTRAP_MARKDOWN);
+    res.status(201).json({ success: true, data: session });
+    return;
+  }
+
+  const db = getSupabaseClient();
   const { data: session, error } = await db
     .from('chat_sessions')
     .insert({ user_id: userId, title })
@@ -92,13 +87,12 @@ router.post('/sessions', async (req: Request, res: Response) => {
 
   if (error || !session) { res.status(500).json({ success: false, error: error?.message }); return; }
 
-  // Insert system message to bootstrap context
   await db.from('chat_messages').insert({
     session_id: session.id,
     user_id: userId,
     role: 'system',
-    content: SYSTEM_PROMPT,
-    signal_context_id: signalContextId ?? null,
+    content: SESSION_BOOTSTRAP_MARKDOWN,
+    signal_context_id: _signalContextId ?? null,
   });
 
   res.status(201).json({ success: true, data: session });
@@ -110,6 +104,11 @@ router.post('/sessions', async (req: Request, res: Response) => {
 router.get('/sessions', async (req: Request, res: Response) => {
   const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+
+  if (isMemoryMode()) {
+    res.json({ success: true, data: memoryListSessions(userId) });
+    return;
+  }
 
   const db = getSupabaseClient();
   const { data, error } = await db
@@ -130,12 +129,30 @@ router.get('/sessions/:id', async (req: Request, res: Response) => {
   const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
+  const sessionId = req.params.id;
+
+  if (isMemoryMode()) {
+    const sess = memoryGetSession(sessionId);
+    if (!sess || sess.user_id !== userId) { res.status(404).json({ success: false, error: 'Not found' }); return; }
+    const rows = memoryGetMessages(sessionId, true);
+    res.json({
+      success: true,
+      data: rows.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        created_at: m.created_at,
+      })),
+    });
+    return;
+  }
+
   const db = getSupabaseClient();
   const { data, error } = await db
     .from('chat_messages')
     .select('id, role, content, created_at')
-    .eq('session_id', req.params.id)
-    .neq('role', 'system') // don't expose system prompt
+    .eq('session_id', sessionId)
+    .neq('role', 'system')
     .order('created_at', { ascending: true });
 
   if (error) { res.status(500).json({ success: false, error: error.message }); return; }
@@ -144,51 +161,108 @@ router.get('/sessions/:id', async (req: Request, res: Response) => {
 
 /**
  * POST /chat/sessions/:id — Send message + get AI response
+ * Body: { content: string, appContext?: string } — optional appContext = live signals summary from the client
  */
 router.post('/sessions/:id', async (req: Request, res: Response) => {
   const userId = await getUserId(req);
   if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
 
-  const { content } = req.body;
+  const { content, appContext } = req.body as { content?: string; appContext?: string };
   if (!content?.trim()) { res.status(400).json({ success: false, error: 'content is required' }); return; }
 
-  const db = getSupabaseClient();
   const sessionId = req.params.id;
+  const trimmed = content.trim();
+  const contextBlock =
+    typeof appContext === 'string' && appContext.trim().length > 0 ? appContext.trim() : undefined;
 
-  // Save user message
-  await db.from('chat_messages').insert({
-    session_id: sessionId,
-    user_id: userId,
-    role: 'user',
-    content: content.trim(),
-  });
+  try {
+    if (isMemoryMode()) {
+      const sess = memoryGetSession(sessionId);
+      if (!sess || sess.user_id !== userId) { res.status(404).json({ success: false, error: 'Not found' }); return; }
 
-  // Load conversation history for context
-  const { data: history } = await db
-    .from('chat_messages')
-    .select('role, content')
-    .eq('session_id', sessionId)
-    .order('created_at', { ascending: true })
-    .limit(12);
+      memoryAppendMessage(sessionId, userId, 'user', trimmed);
 
-  const { content: aiResponse, tokensUsed } = await generateAIResponse(
-    (history ?? []).map(m => ({ role: m.role as 'system' | 'user' | 'assistant', content: m.content })),
-    content.trim()
-  );
+      const historyRows = memoryHistoryForAi(sessionId, 14);
+      const history: ChatMessage[] = historyRows.map((m) => ({
+        role: m.role as 'system' | 'user' | 'assistant',
+        content: m.content,
+      }));
 
-  const { data: aiMsg } = await db.from('chat_messages').insert({
-    session_id: sessionId,
-    user_id: userId,
-    role: 'assistant',
-    content: aiResponse,
-    tokens_used: tokensUsed,
-  }).select().single();
+      const { content: aiResponse, tokensUsed } = await generateAIResponse(history, {
+        extraSystemContext: contextBlock,
+      });
 
-  // Update session timestamp
-  await db.from('chat_sessions').update({ updated_at: new Date().toISOString() }).eq('id', sessionId);
+      const aiMsg = memoryAppendMessage(sessionId, userId, 'assistant', aiResponse, tokensUsed);
+      if (!aiMsg) {
+        res.status(500).json({ success: false, error: 'Failed to save assistant message' });
+        return;
+      }
 
-  res.json({ success: true, data: { message: aiMsg, response: aiResponse } });
+      res.json({
+        success: true,
+        data: {
+          message: {
+            id: aiMsg.id,
+            role: aiMsg.role,
+            content: aiMsg.content,
+            created_at: aiMsg.created_at,
+            tokens_used: aiMsg.tokens_used,
+          },
+          response: aiResponse,
+        },
+      });
+      return;
+    }
+
+    const db = getSupabaseClient();
+
+    await db.from('chat_messages').insert({
+      session_id: sessionId,
+      user_id: userId,
+      role: 'user',
+      content: trimmed,
+    });
+
+    const { data: history } = await db
+      .from('chat_messages')
+      .select('role, content')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+      .limit(14);
+
+    const historyMessages: ChatMessage[] = (history ?? []).map((m) => ({
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.content,
+    }));
+
+    const { content: aiResponse, tokensUsed } = await generateAIResponse(historyMessages, {
+      extraSystemContext: contextBlock,
+    });
+
+    const { data: aiMsg, error: aiErr } = await db.from('chat_messages').insert({
+      session_id: sessionId,
+      user_id: userId,
+      role: 'assistant',
+      content: aiResponse,
+      tokens_used: tokensUsed,
+    }).select().single();
+
+    if (aiErr || !aiMsg) {
+      res.status(500).json({ success: false, error: aiErr?.message ?? 'Failed to save AI message' });
+      return;
+    }
+
+    await db.from('chat_sessions').update({ updated_at: new Date().toISOString() }).eq('id', sessionId);
+
+    res.json({ success: true, data: { message: aiMsg, response: aiResponse } });
+  } catch (err) {
+    if (err instanceof GroqNotConfiguredError) {
+      res.status(503).json({ success: false, error: err.message });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'AI request failed';
+    res.status(500).json({ success: false, error: message });
+  }
 });
-
 
 export default router;

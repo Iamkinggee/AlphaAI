@@ -45,10 +45,19 @@ export async function runEntryTrigger(
   if (recentCandles.length < 20) return null;
 
   const latest = recentCandles[recentCandles.length - 1];
+  const signalAny = signal as ApproachingSignal & {
+    entry_low?: number;
+    entry_high?: number;
+    entry_zone_low?: number;
+    entry_zone_high?: number;
+  };
 
   // ── 1. Entry Zone Check ────────────────────────────────────────────
   // Price must have closed inside the pre-mapped entry zone.
-  const { low, high } = { low: signal.entry_low ?? signal.entry_zone_low, high: signal.entry_high ?? signal.entry_zone_high };
+  const { low, high } = {
+    low: signalAny.entry_low ?? signalAny.entry_zone_low ?? signal.entryZone?.low,
+    high: signalAny.entry_high ?? signalAny.entry_zone_high ?? signal.entryZone?.high,
+  };
   const inZone = latest.close >= low && latest.close <= high;
   if (!inZone) return null;
 

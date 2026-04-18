@@ -10,7 +10,7 @@
  */
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
-import { generateAIResponse } from '../services/openaiService';
+import { generateAIResponse, GroqNotConfiguredError } from '../services/openaiService';
 
 const router = Router();
 
@@ -388,7 +388,7 @@ Based on these ATR-derived levels and current price action on ${pair}:
 
 Be concise and actionable. Max 200 words.`;
 
-    const { content } = await generateAIResponse([], prompt);
+    const { content } = await generateAIResponse([{ role: 'user', content: prompt }]);
 
     // Also try to find a matching signal in Supabase for richer context
     const db = getSupabaseClient();
@@ -426,6 +426,10 @@ Be concise and actionable. Max 200 words.`;
       },
     });
   } catch (err) {
+    if (err instanceof GroqNotConfiguredError) {
+      res.status(503).json({ success: false, error: err.message });
+      return;
+    }
     const message = err instanceof Error ? err.message : 'Analysis failed';
     res.status(500).json({ success: false, error: message });
   }

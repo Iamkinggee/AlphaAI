@@ -45,10 +45,10 @@ export interface ApproachingSignal {
 }
 
 // ── Configuration ──────────────────────────────────────────────────────
-const MIN_SCORE           = 60;      // Lowered from 65 to increase signal volume for testing
+const MIN_SCORE           = 65;      // Spec minimum for approaching alert quality
 const MIN_ACTIVATION_RR   = 2.0;     // TP1 must be ≥ 1:2 RR (spec hard rule)
 const APPROACH_PCT_MIN    = 0.005;   // 0.5% — already touching zone edge
-const APPROACH_PCT_MAX    = 0.025;   // 2.5% — early warning window
+const APPROACH_PCT_MAX    = 0.015;   // 1.5% — spec early warning ceiling
 const EXTENSION_LIMIT_PCT = 0.02;    // >2% past zone = entry too late (spec rule)
 const STRUCTURAL_MAX_AGE  = 4 * 60 * 60 * 1000; // Structural data freshness cap (4H)
 
@@ -109,6 +109,7 @@ export async function runApproachDetector(
       .filter(z => z.freshness === 'fresh' || z.freshness === 'tested')
       .forEach(z => zones.push({ type: 'SD', high: z.high, low: z.low }));
 
+    const candidates: Array<ApproachingSignal & { _distance: number; _zonePriority: number }> = [];
     for (const zone of zones) {
       // ── 3. Distance to zone ─────────────────────────────────────────
       const distance = getDistanceToZone(currentPrice, zone.high, zone.low);
@@ -181,7 +182,7 @@ export async function runApproachDetector(
       // ── 8. Setup Label ───────────────────────────────────────────────
       const setupType = generateSetupLabel(zone.type, scoreResult.factors, choch, h4Data.trend);
 
-      approaching.push({
+      candidates.push({
         pair,
         direction,
         timeframe: '4H',
@@ -201,10 +202,19 @@ export async function runApproachDetector(
         rrTp2:       Math.round(rrTp2 * 10) / 10,
         rrTp3:       Math.round(rrTp3 * 10) / 10,
         detectedAt:  Date.now(),
+        _distance: distance,
+        _zonePriority: zone.type === 'OB' ? 3 : zone.type === 'SD' ? 2 : zone.type === 'FVG' ? 1 : 0,
       });
-
-      // Only the first valid zone per pair per scan cycle (highest interest)
-      break;
+    }
+    if (candidates.length > 0) {
+      candidates.sort((a, b) =>
+        b.confluenceScore - a.confluenceScore ||
+        b._zonePriority - a._zonePriority ||
+        a._distance - b._distance
+      );
+      const best = candidates[0];
+      const { _distance, _zonePriority, ...signal } = best;
+      approaching.push(signal);
     }
   }
 
