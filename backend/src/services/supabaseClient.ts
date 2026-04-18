@@ -13,7 +13,8 @@ export function getSupabaseClient(): SupabaseClient {
 
   if (!config.SUPABASE_URL || !config.SUPABASE_SERVICE_ROLE_KEY) {
     console.warn('⚠️  Supabase env vars not set — running in mock mode (dev only)');
-    return createMockSupabase();
+    supabase = createMockSupabase();
+    return supabase;
   }
 
   supabase = createClient(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY, {
@@ -31,20 +32,36 @@ export function getSupabaseClient(): SupabaseClient {
  * Dev-only no-op Supabase mock so the server boots without credentials.
  */
 function createMockSupabase(): SupabaseClient {
-  const mockQuery = {
-    select: () => mockQuery,
-    insert: () => mockQuery,
-    update: () => mockQuery,
-    delete: () => mockQuery,
-    eq: () => mockQuery,
-    order: () => mockQuery,
-    limit: () => mockQuery,
-    single: async () => ({ data: null, error: new Error('Mock Supabase — no credentials') }),
-    then: async () => ({ data: [], error: null }),
+  type MockResult = { data: unknown; error: Error | null; count?: number };
+  const baseResult: MockResult = { data: [], error: null, count: 0 };
+  const singleResult: MockResult = { data: null, error: new Error('Mock Supabase — no credentials'), count: 0 };
+
+  const createQuery = () => {
+    const query: Record<string, (...args: unknown[]) => unknown> = {};
+    const chainMethods = [
+      'select', 'insert', 'update', 'delete',
+      'eq', 'neq', 'in', 'gte', 'lte', 'gt', 'lt',
+      'order', 'limit', 'range', 'or', 'returns'
+    ];
+
+    for (const method of chainMethods) {
+      query[method] = () => query;
+    }
+
+    query.single = async () => singleResult;
+    query.maybeSingle = async () => ({ data: null, error: null, count: 0 });
+    query.then = (onFulfilled?: (value: MockResult) => unknown, onRejected?: (reason: unknown) => unknown) =>
+      Promise.resolve(baseResult).then(onFulfilled, onRejected);
+    query.catch = (onRejected?: (reason: unknown) => unknown) =>
+      Promise.resolve(baseResult).catch(onRejected);
+    query.finally = (onFinally?: (() => void) | undefined) =>
+      Promise.resolve(baseResult).finally(onFinally);
+
+    return query;
   };
 
   return {
-    from: () => mockQuery,
+    from: () => createQuery(),
     auth: {
       signInWithPassword: async () => ({ data: null, error: new Error('Mock Supabase') }),
       signUp: async () => ({ data: null, error: new Error('Mock Supabase') }),

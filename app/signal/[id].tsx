@@ -17,7 +17,7 @@ import { TradePlan, ConfluenceBreakdown } from '@/src/components/signals';
 import { formatRelativeTime } from '@/src/utils/formatters';
 import { useSignals } from '@/src/hooks';
 import { useWatchlistStore } from '@/src/store/useWatchlistStore';
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 
 // ── AI mock analysis keyed by setup type ────────────────────────────
 function generateAIAnalysis(signal: any): string {
@@ -58,6 +58,7 @@ export default function SignalDetailScreen() {
   const [aiLoading,  setAiLoading]  = useState(false);
   const [aiText,     setAiText]     = useState('');
   const [alertSet,   setAlertSet]   = useState(false);
+  const isExpoGo = Constants.appOwnership === 'expo';
 
   const signal = getSignal(id);
 
@@ -68,7 +69,16 @@ export default function SignalDetailScreen() {
 
   const handleSetAlert = useCallback(async () => {
     if (!signal) return;
+    if (isExpoGo) {
+      Alert.alert(
+        'Development Build Required',
+        'Push notifications are not available in Expo Go. Use a development build to enable signal alerts.'
+      );
+      return;
+    }
     try {
+      // Lazy-load to avoid Expo Go runtime error from module side effects.
+      const Notifications = require('expo-notifications');
       const { status } = await Notifications.requestPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permissions needed', 'Enable notifications in Settings to receive signal alerts.');
@@ -88,7 +98,7 @@ export default function SignalDetailScreen() {
       Alert.alert('Alert Set ✓', `Alert saved for ${signal.pair} — you'll be notified when price approaches the zone.`);
       setAlertSet(true);
     }
-  }, [signal]);
+  }, [signal, isExpoGo]);
 
   const handleAddWatchlist = useCallback(async () => {
     if (!signal) return;
