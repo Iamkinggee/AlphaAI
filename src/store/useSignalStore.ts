@@ -14,6 +14,7 @@ import { API } from '@/src/constants/api';
 
 // Statuses considered "resolved" / terminal — these belong in history
 const RESOLVED_STATUSES: SignalStatus[] = ['TP3_hit', 'stopped', 'expired'];
+const SIGNALS_RETRY_DELAY_MS = 1200;
 
 interface SignalStore {
   // State
@@ -89,7 +90,7 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
     if (get().isLoading) return;
     set({ isLoading: true, error: null });
     try {
-      const res = await apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.LIST);
+      const res = await fetchSignalsWithRetry();
       const rawData = res.data ?? [];
       const data = rawData.map((s) => (s?.entryZone ? (s as Signal) : normaliseSignal(s)));
       
@@ -102,6 +103,13 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch signals';
+      const hasExistingSignals = get().signals.length > 0;
+      const isTimeout = isTimeoutError(message);
+      if (hasExistingSignals && isTimeout) {
+        console.warn('[SignalStore] fetchSignals timeout — keeping previous signal snapshot');
+        set({ isLoading: false, lastScanAt: new Date() });
+        return;
+      }
       console.error('[SignalStore] fetchSignals error:', message);
       set({ isLoading: false, error: message, lastScanAt: new Date() });
     }
@@ -125,7 +133,7 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
     if (get().isRefreshing || get().isLoading) return;
     set({ isRefreshing: true, error: null });
     try {
-      const res = await apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.LIST);
+      const res = await fetchSignalsWithRetry();
       const rawData = res.data ?? [];
       const data = rawData.map((s) => (s?.entryZone ? (s as Signal) : normaliseSignal(s)));
       set({
@@ -136,6 +144,13 @@ export const useSignalStore = create<SignalStore>((set, get) => ({
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Refresh failed';
+      const hasExistingSignals = get().signals.length > 0;
+      const isTimeout = isTimeoutError(message);
+      if (hasExistingSignals && isTimeout) {
+        console.warn('[SignalStore] refreshSignals timeout — keeping previous signal snapshot');
+        set({ isRefreshing: false, lastScanAt: new Date() });
+        return;
+      }
       console.error('[SignalStore] refreshSignals error:', message);
       set({ isRefreshing: false, error: message, lastScanAt: new Date() });
     }
@@ -246,6 +261,9 @@ function normaliseSignal(s: any): Signal {
     timeframe: s.timeframe,
     status: s.status,
     score: s.score,
+    confidenceScore: s.confidence_score ?? s.score,
+    regimeTag: s.regime_tag ?? 'trend_following',
+    qualityBand: s.quality_band ?? (s.score >= 82 ? 'A' : s.score >= 72 ? 'B' : 'C'),
     setupType: s.setup_type || 'SMC Setup Detected',
     entryZone: {
       low: entryLow,
@@ -261,10 +279,32 @@ function normaliseSignal(s: any): Signal {
     confluence: s.confluence_factors || [],
     distance: s.distance_pct || 0,
     distanceFormatted: `${(s.distance_pct || 0).toFixed(2)}%`,
+    currentPrice: s.current_price ?? undefined,
+    currentPriceFormatted: s.current_price ? format(Number(s.current_price)) : undefined,
     createdAt: s.created_at,
     expiresAt: s.expires_at,
+    staleAfter: s.stale_after ?? null,
     timeElapsed: s.created_at ? 'Fresh' : 'Unknown', // Could use date-fns here if needed
     expiresIn: '48h',
   };
+}
+
+async function fetchSignalsWithRetry(): Promise<{ success: boolean; data: any[] }> {
+  try {
+    return await apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.LIST);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!isTimeoutError(msg)) throw err;
+    await delay(SIGNALS_RETRY_DELAY_MS);
+    return apiClient.get<{ success: boolean; data: any[] }>(API.SIGNALS.LIST);
+  }
+}
+
+function isTimeoutError(message: string): boolean {
+  return message.toLowerCase().includes('timed out');
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 

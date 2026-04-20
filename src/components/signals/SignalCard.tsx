@@ -29,6 +29,20 @@ export function SignalCard({ signal, index = 0, onDelete }: SignalCardProps) {
   const scoreCol = signal.score >= 80 ? theme.bullish
     : signal.score >= 65 ? theme.approaching
     : theme.textTertiary;
+  const confidence = signal.confidenceScore ?? signal.score;
+  const qualityBand = signal.qualityBand ?? (confidence >= 82 ? 'A' : confidence >= 72 ? 'B' : 'C');
+  const qualityColor = qualityBand === 'A' ? theme.bullish : qualityBand === 'B' ? theme.approaching : theme.textTertiary;
+  const staleText = signal.staleAfter
+    ? (() => {
+        const diffMs = new Date(signal.staleAfter).getTime() - Date.now();
+        if (Number.isNaN(diffMs)) return null;
+        if (diffMs <= 0) return 'Stale';
+        const mins = Math.floor(diffMs / 60_000);
+        const hrs = Math.floor(mins / 60);
+        const rem = mins % 60;
+        return hrs > 0 ? `Stale in ${hrs}h ${rem}m` : `Stale in ${mins}m`;
+      })()
+    : null;
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 40).duration(350)}>
@@ -96,6 +110,30 @@ export function SignalCard({ signal, index = 0, onDelete }: SignalCardProps) {
           <Text style={[styles.setupType, { color: theme.textSecondary, fontFamily: 'Inter-Regular' }]} numberOfLines={1}>
             {signal.setupType}
           </Text>
+          <View style={styles.telemetryRow}>
+            <View style={[styles.telemetryChip, { backgroundColor: qualityColor + '18', borderColor: qualityColor + '44' }]}>
+              <Text style={[styles.telemetryChipText, { color: qualityColor, fontFamily: 'Inter-SemiBold' }]}>
+                Quality {qualityBand}
+              </Text>
+            </View>
+            <View style={[styles.telemetryChip, { backgroundColor: theme.accentPrimaryDim, borderColor: theme.accentPrimary + '40' }]}>
+              <Text style={[styles.telemetryChipText, { color: theme.accentPrimary, fontFamily: 'Inter-SemiBold' }]}>
+                {String(signal.regimeTag ?? 'trend_following').replace('_', ' ')}
+              </Text>
+            </View>
+            {staleText ? (
+              <Text style={[styles.staleText, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+                {staleText}
+              </Text>
+            ) : null}
+            {signal.currentPriceFormatted ? (
+              <View style={[styles.telemetryChip, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <Text style={[styles.telemetryChipText, { color: theme.textSecondary, fontFamily: 'Inter-SemiBold' }]}>
+                  CMP {signal.currentPriceFormatted}
+                </Text>
+              </View>
+            ) : null}
+          </View>
 
           {/* ── Price levels ───────────────────────────────────────── */}
           <View style={[styles.levels, { backgroundColor: theme.surface + '80', borderColor: theme.border }]}>
@@ -177,6 +215,10 @@ const styles = StyleSheet.create({
   meterBg:      { width: 60, height: 4, borderRadius: 2, overflow: 'hidden' },
   meterFill:    { height: '100%', borderRadius: 2 },
   setupType:    { fontSize: 15, marginBottom: 14, opacity: 0.8 },
+  telemetryRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  telemetryChip:{ borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  telemetryChipText: { fontSize: 12, textTransform: 'capitalize' },
+  staleText:    { fontSize: 12 },
   levels:       { flexDirection: 'row', borderRadius: 12, borderWidth: 1, padding: 12, marginBottom: 14, gap: 10 },
   levelItem:    { flex: 1 },
   levelLabel:   { fontSize: 12, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 },

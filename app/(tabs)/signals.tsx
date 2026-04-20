@@ -119,7 +119,7 @@ export default function SignalsScreen() {
       {/* ── Header ─────────────────────────────────────────────────── */}
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <Animated.View entering={FadeInDown.duration(400)}>
-          <Text style={[styles.title, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>Signals Control</Text>
+          <Text style={[styles.title, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>Signals</Text>
           <View style={styles.scannerRow}>
             <View style={[styles.statusIndicator, { backgroundColor: theme.bullish }]} />
             <Text style={[styles.scannerText, { color: theme.textTertiary, fontFamily: 'Inter-Medium' }]}>
@@ -127,17 +127,6 @@ export default function SignalsScreen() {
             </Text>
           </View>
         </Animated.View>
-
-        <Pressable 
-          onPress={tab === 'history' ? handleClearHistory : refresh}
-          style={[styles.refreshIcon, { backgroundColor: theme.card, borderColor: theme.border }]}
-        >
-          <Ionicons 
-            name={tab === 'history' ? 'trash-outline' : 'filter-outline'} 
-            size={20} 
-            color={tab === 'history' ? theme.bearish : theme.textSecondary} 
-          />
-        </Pressable>
       </View>
 
       {/* ── Tab Toggle ─────────────────────────────────────────────── */}

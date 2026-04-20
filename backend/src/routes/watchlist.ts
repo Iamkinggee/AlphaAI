@@ -7,19 +7,15 @@
  */
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
+import { requireAuth, type AuthedRequest } from '../middleware/auth';
 
 const router = Router();
-
-function getUserId(req: Request): string | null {
-  return req.headers['x-user-id'] as string ?? null;
-}
 
 /**
  * GET /watchlist
  */
-router.get('/', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.get('/', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const db = getSupabaseClient();
   const { data, error } = await db
@@ -35,9 +31,8 @@ router.get('/', async (req: Request, res: Response) => {
 /**
  * POST /watchlist
  */
-router.post('/', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.post('/', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { pair, baseAsset, quoteAsset } = req.body;
   if (!pair) { res.status(400).json({ success: false, error: 'pair is required' }); return; }
@@ -56,9 +51,8 @@ router.post('/', async (req: Request, res: Response) => {
 /**
  * PATCH /watchlist/:id — Set price alerts
  */
-router.patch('/:id', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.patch('/:id', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { id } = req.params;
   const { alertAbove, alertBelow } = req.body;
@@ -79,9 +73,8 @@ router.patch('/:id', async (req: Request, res: Response) => {
 /**
  * DELETE /watchlist/:id
  */
-router.delete('/:id', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { id } = req.params;
   const db = getSupabaseClient();

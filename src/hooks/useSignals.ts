@@ -13,6 +13,7 @@ import type { SignalStatus, SignalDirection } from '@/src/types';
  */
 export function useSignals() {
   const {
+    signals: allSignals,
     isLoading,
     isLoadingHistory,
     isRefreshing,
@@ -76,7 +77,11 @@ export function useSignals() {
     return () => { unsubsRef.current.forEach((fn) => fn()); };
   }, [fetchSignals]);
 
-  const signals    = filteredSignals();
+  // Important: expose the full in-play signal set here.
+  // UI screens that need extra filtering should apply local filters,
+  // otherwise dashboard metrics can be unintentionally affected by
+  // persisted filter state from the Signals screen.
+  const signals    = allSignals;
   const approaching = approachingSignals();
   const active     = activeSignals();
   const history    = historySignals;

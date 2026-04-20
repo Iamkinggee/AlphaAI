@@ -10,6 +10,7 @@
  */
 import { getSupabaseClient } from './supabaseClient';
 import { broadcastActivated, broadcastAll } from './wsServerManager';
+import { sendPushToAllDevices } from './pushNotificationService';
 
 export type SignalStatus =
   | 'approaching'
@@ -23,6 +24,7 @@ export type SignalStatus =
 interface LiveSignalRow {
   id:              string;
   pair:            string;
+  timeframe?:      string;
   direction:       'LONG' | 'SHORT';
   status:          SignalStatus;
   // Support BOTH column name conventions used across migrations
@@ -34,13 +36,18 @@ interface LiveSignalRow {
   take_profit2?:  number; take_profit_2?:  number;
   take_profit3?:  number; take_profit_3?:  number;
   expires_at:      string;
+  stale_after?:    string | null;
   activated_at:    string | null;
+  detected_at?:    string | null;
+  regime_tag?:     string | null;
+  quality_band?:   string | null;
 }
 
 // Normalise the raw DB row into a clean LiveSignal shape.
 interface LiveSignal {
   id:             string;
   pair:           string;
+  timeframe:      string;
   direction:      'LONG' | 'SHORT';
   status:         SignalStatus;
   entryLow:       number;
@@ -50,12 +57,18 @@ interface LiveSignal {
   takeProfit2:    number;
   takeProfit3:    number;
   expiresAt:      string;
+  staleAfter:     string | null;
+  activatedAt:    string | null;
+  detectedAt:     string | null;
+  regimeTag:      string | null;
+  qualityBand:    string | null;
 }
 
 function normaliseRow(r: LiveSignalRow): LiveSignal {
   return {
     id:          r.id,
     pair:        r.pair,
+    timeframe:   r.timeframe ?? '4H',
     direction:   r.direction,
     status:      r.status,
     entryLow:    r.entry_zone_low  ?? r.entry_low  ?? 0,
@@ -65,6 +78,11 @@ function normaliseRow(r: LiveSignalRow): LiveSignal {
     takeProfit2: r.take_profit2 ?? r.take_profit_2 ?? 0,
     takeProfit3: r.take_profit3 ?? r.take_profit_3 ?? 0,
     expiresAt:   r.expires_at,
+    staleAfter:  r.stale_after ?? null,
+    activatedAt: r.activated_at ?? null,
+    detectedAt:  r.detected_at ?? null,
+    regimeTag:   r.regime_tag ?? null,
+    qualityBand: r.quality_band ?? null,
   };
 }
 
@@ -118,6 +136,10 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
           : {}),
       }).eq('id', signal.id);
 
+      if ((['TP1_hit', 'TP2_hit', 'TP3_hit', 'stopped', 'expired'] as SignalStatus[]).includes(newStatus)) {
+        await upsertSignalOutcome(signal, newStatus, currentPrice, now);
+      }
+
       console.log(`📊 [Lifecycle] ${signal.pair} ${signal.status} → ${newStatus} @ $${currentPrice}`);
 
       // Broadcast to all connected clients
@@ -134,6 +156,18 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
         },
       });
 
+      await sendPushToAllDevices({
+        title: buildNotifTitle(signal.pair, newStatus, currentPrice),
+        body: buildNotifBody(signal, newStatus, currentPrice),
+        data: {
+          type: newStatus === 'stopped' ? 'stopped' : 'tp_hit',
+          signalId: signal.id,
+          pair: signal.pair,
+          status: newStatus,
+        },
+        priority: newStatus === 'stopped' ? 'high' : 'default',
+      });
+
       // ── Only insert a notification if we haven't already done so for this signal+status ──
       const notifType = mapStatusToNotifType(newStatus);
       const { count } = await db
@@ -143,7 +177,7 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
         .eq('type', notifType);
 
       if ((count ?? 0) === 0) {
-        await db.from('notifications').insert({
+        const { error: notifInsertErr } = await db.from('notifications').insert({
           type:      notifType,
           priority:  newStatus === 'stopped' ? 'high' : 'critical',
           title:     buildNotifTitle(signal.pair, newStatus, currentPrice),
@@ -151,6 +185,11 @@ async function checkSignalLifecycle(prices: Record<string, number>): Promise<voi
           pair:      signal.pair,
           signal_id: signal.id,
         });
+        if (notifInsertErr) {
+          // Signals are currently global; notifications table requires user_id.
+          // Keep lifecycle flowing even when in-app DB notification row cannot be written.
+          console.debug('[Lifecycle] Notification row skipped:', notifInsertErr.message);
+        }
       }
 
     }
@@ -163,6 +202,7 @@ function evaluateSignal(signal: LiveSignal, price: number, now: string): SignalS
 
   // 1. Expiry check
   if (new Date(expiresAt) < new Date(now)) return 'expired';
+  if (signal.staleAfter && new Date(signal.staleAfter) < new Date(now) && status === 'approaching') return 'expired';
 
   // 2. Stop loss hit (ONLY if already active)
   if (status !== 'approaching') {
@@ -172,7 +212,7 @@ function evaluateSignal(signal: LiveSignal, price: number, now: string): SignalS
 
 
   // 3. TP progression
-  if (status === 'active' || status === 'approaching') {
+  if (status === 'active') {
     const tp1Hit = isLong ? price >= takeProfit1 : price <= takeProfit1;
     if (tp1Hit) return 'TP1_hit';
   }
@@ -186,6 +226,41 @@ function evaluateSignal(signal: LiveSignal, price: number, now: string): SignalS
   }
 
   return null; // No change
+}
+
+async function upsertSignalOutcome(
+  signal: LiveSignal,
+  status: SignalStatus,
+  exitPrice: number,
+  nowIso: string
+): Promise<void> {
+  const db = getSupabaseClient();
+  const entryMid = (signal.entryLow + signal.entryHigh) / 2;
+  const risk = Math.abs(entryMid - signal.stopLoss);
+  if (risk <= 0) return;
+
+  const signedMove = signal.direction === 'LONG' ? (exitPrice - entryMid) : (entryMid - exitPrice);
+  const rMultiple = Number((signedMove / risk).toFixed(4));
+  const detectedMs = signal.detectedAt ? new Date(signal.detectedAt).getTime() : null;
+  const nowMs = new Date(nowIso).getTime();
+  const holdingMinutes = detectedMs ? Math.max(0, Math.round((nowMs - detectedMs) / 60_000)) : null;
+
+  await db.from('signal_outcomes').upsert({
+    signal_id: signal.id,
+    pair: signal.pair,
+    timeframe: signal.timeframe,
+    direction: signal.direction,
+    regime_tag: signal.regimeTag,
+    quality_band: signal.qualityBand,
+    outcome_status: status,
+    entry_price: entryMid,
+    exit_price: exitPrice,
+    r_multiple: rMultiple,
+    holding_minutes: holdingMinutes,
+    detected_at: signal.detectedAt,
+    activated_at: signal.activatedAt,
+    closed_at: nowIso,
+  }, { onConflict: 'signal_id,outcome_status' });
 }
 
 function mapStatusToNotifType(status: SignalStatus): string {

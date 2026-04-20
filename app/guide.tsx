@@ -5,19 +5,22 @@
  * This page is the single source of truth for user onboarding.
  * UPDATE THIS FILE whenever the app architecture or features change.
  *
- * Last updated: 2026-04-17 (Post SMC Overhaul)
+ * Last updated: 2026-04-20 (Telemetry + Quality Layer)
  * Current architecture:
  *  - Monitoring Top 80 USDT Perpetual pairs (Binance Futures)
  *  - 3-stage detection: Structure Scanner → Approach Detector → Entry Trigger
  *  - 2.5% Early-Detection Approach Window
  *  - Institutional Confirmation: 5M BOS / FVG Fill / Volume Gate
  */
+import { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/src/contexts/ThemeContext';
+import { apiClient } from '@/src/services/apiClient';
+import { API } from '@/src/constants/api';
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -29,6 +32,11 @@ interface GuideSection {
   items: { heading: string; body: string }[];
 }
 
+interface UniversePair {
+  pair: string;
+  symbol: string;
+}
+
 const GUIDE_SECTIONS: GuideSection[] = [
   {
     id: 'overview',
@@ -38,11 +46,11 @@ const GUIDE_SECTIONS: GuideSection[] = [
     items: [
       {
         heading: 'SMC Institutional Intelligence',
-        body: 'AlphaAI is a professional-grade Smart Money Concept (SMC) signal engine. It monitors the Top 80 USDT Perpetual pairs by volume on Binance Futures, identifying structural setups where "Smart Money" (Institutional banks and funds) is likely to inject liquidity.',
+        body: 'AlphaAI is a Smart Money Concept (SMC) signal engine. It monitors top USDT perpetual pairs by volume on Binance Futures, then highlights areas where institutional order flow is likely to react.',
       },
       {
         heading: 'The 3-Stage Detection Pipeline',
-        body: 'The engine runs a predictive 3-stage lifecycle:\n\n1. Structure Scanner (H1/H4/D1) — Pre-maps high-probability Order Blocks, FVGs, and S&D zones.\n\n2. Approach Detector (Early Warning) — Fired when price is within 2.5% of a zone. Allows you to prepare BEFORE the entry.\n\n3. Entry Trigger (5M Confirmation) — Strictly confirms entry on 5-minute candle closes using micro-structure Break of Structure (BOS) and volume verification.',
+        body: 'The engine runs a 3-stage lifecycle:\n\n1. Structure Scanner (H1/H4/D1) — maps Order Blocks, FVGs, and key zones.\n\n2. Approach Detector — alerts when price is near valid zones so you can prepare early.\n\n3. Entry Trigger (5M confirmation) — confirms entries on lower-timeframe structure and volume.',
       },
     ],
   },
@@ -54,15 +62,19 @@ const GUIDE_SECTIONS: GuideSection[] = [
     items: [
       {
         heading: 'Status: Approaching (Early Warning)',
-        body: 'Price is within the 0.5%–2.5% window of a pre-mapped institutional zone. These alerts are predictive, allowing you to set up your orders before the price enters the "Kill Zone".',
+        body: 'Price is entering the approach window of a mapped zone. Use this stage to set your plan, review direction, and prepare execution before the final trigger.',
       },
       {
         heading: 'Status: Active (Confirmed Entry)',
-        body: 'Price has entered the zone AND a 5M SMC pattern (BOS, FVG Fill, or Engulfing) has closed with significant volume. This is your high-probability execution trigger.',
+        body: 'Price has reached the zone and confirmed on 5M structure. This is the execution-ready stage where the setup is validated by the engine.',
       },
       {
         heading: 'Institutional Confluence (Score)',
         body: 'Signals are scored 0–100 using weighted institutional factors:\n\n• 4H Order Block Alignment (+20)\n• HTF Trend/Bias Confluence (+15)\n• Liquidity Sweep / Induced Liquidity (+20)\n• Entry in 5M Premium/Discount (+10)\n• 5M Structural BOS Confirmation (+15)\n\nSignals below 65 are automatically rejected by the engine.',
+      },
+      {
+        heading: 'New Telemetry Fields (How to Read Them)',
+        body: 'Each signal now includes advanced telemetry:\n\n• Confidence Score — refined confidence estimate based on confluence, RR quality, distance-to-zone timing, and regime bias.\n\n• Quality Band (A/B/C) — fast ranking for decision speed. A = strongest candidates, B = valid with moderate caution, C = lowest priority.\n\n• Regime Tag — market condition context (trend_following, reversal, ranging_risk, high_volatility).\n\n• Stale Timer — tells you when a setup has been waiting too long and should be deprioritized or ignored.',
       },
     ],
   },
@@ -78,7 +90,19 @@ const GUIDE_SECTIONS: GuideSection[] = [
       },
       {
         heading: 'The Partial Profit Model',
-        body: 'Professional trading is about survival. Follow these rules when a signal hits targets:\n\n• TP1 (1:2 RR) → Close 33% of position. Move stop to breakeven (BE).\n• TP2 (1:4 RR) → Close another 33%. Trail stop to TP1.\n• TP3 (Target) → Close remaining. Full capture.',
+        body: 'Treat targets as a risk management ladder:\n\n• TP1 → reduce exposure and secure partial profit.\n• TP2 → continue scaling out and tighten risk.\n• TP3 → close the remainder if momentum follows through.',
+      },
+      {
+        heading: 'Execution Flow in App',
+        body: 'Recommended flow: Dashboard pulse check → Signals tab for setup quality + regime → check Quality Band and Confidence Score → verify Stale Timer is still valid → Analyse tab for chart context and AI confirmation → execute on your exchange with predefined risk.',
+      },
+      {
+        heading: 'How Professionals Should Use Quality + Regime',
+        body: 'Base model: prioritize A/B setups in trend_following or clean reversal regimes. Reduce size or skip C setups during ranging_risk/high_volatility unless your playbook is built for those conditions. If a signal is close to staleness, treat it as lower-quality timing even if score is high.',
+      },
+      {
+        heading: 'Pro Mode (Now Active)',
+        body: 'Pro Mode applies stricter filtering before a signal reaches you. Active rules:\n\n• Confidence Score must be at least 78\n• TP1 Risk/Reward must be at least 1:2.5\n• Distance to zone must be within 1.2%\n• Quality band C setups are suppressed\n• Ranging-risk and high-volatility regimes are suppressed\n\nThis is designed to reduce noise and prioritize consistency over signal quantity.',
       },
     ],
   },
@@ -120,6 +144,54 @@ export default function HowToUseScreen() {
   const { theme } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [tradeablePairs, setTradeablePairs] = useState<string[]>([]);
+  const [isUniverseLoading, setIsUniverseLoading] = useState(true);
+  const [proModeEnabled, setProModeEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; data?: UniversePair[] }>(API.MARKET.UNIVERSE);
+        if (!alive || !res.success || !Array.isArray(res.data)) return;
+        const pairs = Array.from(
+          new Set(
+            res.data
+              .map((item) => item.pair)
+              .filter((pair): pair is string => typeof pair === 'string' && pair.endsWith('/USDT'))
+          )
+        );
+        setTradeablePairs(pairs);
+      } catch {
+        // Keep guide accessible even when backend is unreachable.
+      } finally {
+        if (alive) setIsUniverseLoading(false);
+      }
+    })();
+
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; data?: { proModeEnabled?: boolean } }>(API.MARKET.PULSE);
+        if (!alive || !res.success) return;
+        if (typeof res.data?.proModeEnabled === 'boolean') {
+          setProModeEnabled(res.data.proModeEnabled);
+        }
+      } catch {
+        // Keep guide available even if runtime mode cannot be fetched.
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const tradeableTickers = useMemo(
+    () => tradeablePairs.map((pair) => pair.replace('/USDT', '')).sort((a, b) => a.localeCompare(b)),
+    [tradeablePairs]
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -152,15 +224,62 @@ export default function HowToUseScreen() {
             Master Institutional SMC
           </Text>
           <Text style={[styles.heroBody, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
-            Learn how AlphaAI monitors 80 top markets using high-probability structure mapping and multi-stage confirmation.
+            Learn how AlphaAI monitors 80 top markets using high-probability structure mapping, multi-stage confirmation, and new confidence telemetry for cleaner execution decisions.
           </Text>
+          <View
+            style={[
+              styles.proModeBadge,
+              {
+                backgroundColor:
+                  proModeEnabled === null
+                    ? theme.surface
+                    : proModeEnabled
+                      ? theme.bullishDim
+                      : theme.surface,
+                borderColor:
+                  proModeEnabled === null
+                    ? theme.border
+                    : proModeEnabled
+                      ? theme.bullish + '40'
+                      : theme.textTertiary + '40',
+              },
+            ]}
+          >
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={14}
+              color={
+                proModeEnabled === null
+                  ? theme.textTertiary
+                  : proModeEnabled
+                    ? theme.bullish
+                    : theme.textTertiary
+              }
+            />
+            <Text
+              style={[
+                styles.proModeBadgeText,
+                {
+                  color:
+                    proModeEnabled === null
+                      ? theme.textTertiary
+                      : proModeEnabled
+                        ? theme.bullish
+                        : theme.textTertiary,
+                  fontFamily: 'Inter-SemiBold',
+                },
+              ]}
+            >
+              {proModeEnabled === null ? 'Pro Mode: checking...' : `Pro Mode ${proModeEnabled ? 'ON' : 'OFF'}`}
+            </Text>
+          </View>
         </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(60).duration(400)} style={styles.statsRow}>
           {[
-            { label: 'Markets', value: '80', icon: 'globe-outline' as IoniconsName },
+            { label: 'Markets', value: tradeablePairs.length > 0 ? `${tradeablePairs.length}` : '80', icon: 'globe-outline' as IoniconsName },
             { label: 'Detection', value: '3-Stage', icon: 'flash-outline' as IoniconsName },
-            { label: 'Scan Cycle', value: '60s', icon: 'refresh-outline' as IoniconsName },
+            { label: 'Telemetry', value: 'Live', icon: 'pulse-outline' as IoniconsName },
           ].map((stat, i) => (
             <View key={i} style={[styles.statCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <Ionicons name={stat.icon} size={16} color={theme.accentPrimary} />
@@ -173,6 +292,38 @@ export default function HowToUseScreen() {
         {GUIDE_SECTIONS.map((section, index) => (
           <SectionCard key={section.id} section={section} index={index} />
         ))}
+
+        <Animated.View
+          entering={FadeInDown.delay(460).duration(400)}
+          style={[styles.sectionCard, { backgroundColor: theme.card, borderColor: theme.border }]}
+        >
+          <View style={styles.sectionHeader}>
+            <View style={[styles.sectionIconWrap, { backgroundColor: theme.accentPrimaryDim }]}>
+              <Ionicons name="logo-bitcoin" size={20} color={theme.accentPrimary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionEmoji}>🪙</Text>
+              <Text style={[styles.sectionTitle, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>
+                Currently Tradeable Coins
+              </Text>
+              <Text style={[styles.tradeableMeta, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>
+                {isUniverseLoading
+                  ? 'Loading live universe...'
+                  : tradeablePairs.length > 0
+                    ? `${tradeablePairs.length} pairs currently supported`
+                    : 'Could not load live universe. Showing core majors.'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.coinsWrap}>
+            {(tradeableTickers.length > 0 ? tradeableTickers : ['BTC', 'ETH', 'SOL']).map((coin) => (
+              <View key={coin} style={[styles.coinPill, { backgroundColor: theme.accentPrimaryDim, borderColor: theme.accentPrimary + '30' }]}>
+                <Text style={[styles.coinPillText, { color: theme.accentPrimary, fontFamily: 'Inter-SemiBold' }]}>{coin}</Text>
+              </View>
+            ))}
+          </View>
+        </Animated.View>
 
         <Animated.View entering={FadeInDown.delay(500).duration(400)} style={styles.disclaimer}>
           <Ionicons name="warning-outline" size={16} color={theme.textTertiary} />
@@ -235,6 +386,8 @@ const styles = StyleSheet.create({
   heroIconWrap:   { width: 80, height: 80, borderRadius: 40, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
   heroTitle:      { fontSize: 26, marginBottom: 8 },
   heroBody:       { fontSize: 16, textAlign: 'center', lineHeight: 22, paddingHorizontal: 12 },
+  proModeBadge:   { marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6 },
+  proModeBadgeText: { fontSize: 13 },
   statsRow:       { flexDirection: 'row', gap: 10, marginBottom: 24 },
   statCard:       { flex: 1, alignItems: 'center', gap: 4, borderRadius: 14, borderWidth: 1, paddingVertical: 14 },
   statValue:      { fontSize: 20 },
@@ -247,6 +400,10 @@ const styles = StyleSheet.create({
   itemWrap:       { paddingHorizontal: 16, paddingVertical: 14 },
   itemHeading:    { fontSize: 17, marginBottom: 6 },
   itemBody:       { fontSize: 15, lineHeight: 21 },
+  tradeableMeta:  { fontSize: 13, marginTop: 2 },
+  coinsWrap:      { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 16 },
+  coinPill:       { borderRadius: 999, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6 },
+  coinPillText:   { fontSize: 13 },
   disclaimer:     { flexDirection: 'row', gap: 10, paddingHorizontal: 8, paddingVertical: 20, alignItems: 'flex-start' },
   disclaimerText: { flex: 1, fontSize: 14, lineHeight: 18 },
 });

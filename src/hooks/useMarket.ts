@@ -19,6 +19,8 @@ export function useMarket() {
   } = useMarketStore();
 
   const unsubRef = useRef<(() => void) | null>(null);
+  const reconnectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pulseRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Initial REST fetch — loads pulse + full pair list (top 80)
   useEffect(() => {
@@ -28,6 +30,9 @@ export function useMarket() {
   // Subscribe to real-time WS price ticks
   // Use '*' wildcard so we receive ticks for ALL 80 pairs without listing them
   useEffect(() => {
+    // Defensive connect call to recover sessions where root connect was missed.
+    wsManager.connect();
+
     // Wildcard subscription — backend sends price_tick for every monitored pair
     wsManager.subscribe(['*']);
 
@@ -51,8 +56,31 @@ export function useMarket() {
       wsManager.unsubscribe(['*']);
     };
 
-    return () => unsubRef.current?.();
-  }, []);
+    // Auto-heal WS connection if mobile network drops intermittently.
+    reconnectIntervalRef.current = setInterval(() => {
+      if (!wsManager.connected) {
+        wsManager.connect();
+        wsManager.subscribe(['*']);
+      }
+    }, 10_000);
+
+    // Dashboard pulse fallback refresh (WS does not stream fear/greed and BTC dom).
+    pulseRefreshIntervalRef.current = setInterval(() => {
+      fetchPulse();
+    }, 30_000);
+
+    return () => {
+      unsubRef.current?.();
+      if (reconnectIntervalRef.current) {
+        clearInterval(reconnectIntervalRef.current);
+        reconnectIntervalRef.current = null;
+      }
+      if (pulseRefreshIntervalRef.current) {
+        clearInterval(pulseRefreshIntervalRef.current);
+        pulseRefreshIntervalRef.current = null;
+      }
+    };
+  }, [fetchPulse, updatePriceTick]);
 
   const getPrice = (pair: string) => priceTicks[pair];
 

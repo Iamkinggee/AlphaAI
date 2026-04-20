@@ -10,6 +10,9 @@ import * as SecureStore from 'expo-secure-store';
 import { API } from '@/src/constants/api';
 
 const STORAGE_KEY_ACCESS = 'alphaai_access_token';
+const REQUEST_TIMEOUT_MS = 25_000;
+const GET_RETRY_DELAY_MS = 1000;
+const GET_RETRY_ATTEMPTS = 1;
 
 export class ApiError extends Error {
   constructor(
@@ -41,9 +44,9 @@ async function request<T>(
   const url = `${API.BASE_URL}${endpoint}`;
   const headers = await getHeaders();
 
-  // 15-second timeout to handle slow mobile connections without failing instantly
+  // Slightly higher timeout helps on device + LAN jitter.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15_000);
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -85,8 +88,23 @@ async function request<T>(
 }
 
 export const apiClient = {
-  get: <T>(endpoint: string): Promise<T> =>
-    request<T>(endpoint, { method: 'GET' }),
+  get: async <T>(endpoint: string): Promise<T> => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= GET_RETRY_ATTEMPTS; attempt++) {
+      try {
+        return await request<T>(endpoint, { method: 'GET' });
+      } catch (err) {
+        lastErr = err;
+        const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+        const isTransient = message.includes('timed out') || message.includes('network request failed');
+        if (!isTransient || attempt === GET_RETRY_ATTEMPTS) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, GET_RETRY_DELAY_MS));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('GET request failed');
+  },
 
   post: <T>(endpoint: string, body?: unknown): Promise<T> =>
     request<T>(endpoint, {

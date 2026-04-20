@@ -19,6 +19,7 @@ import { startLifecycleMonitor, stopLifecycleMonitor } from './signalLifecycle';
 import { computeTradePlan } from './tradePlanner';
 import { computeSignalScore } from './signalScorer';
 import { broadcastSetupDetected, broadcastPriceTick } from './wsServerManager';
+import { sendPushToAllDevices } from './pushNotificationService';
 import { StructuralData } from '../workers/structureScanner';
 
 // Price tick throttle — only broadcast if price changed > 0.01% to reduce noise
@@ -262,33 +263,32 @@ async function persistApproachingSignals(signals: any[]): Promise<void> {
   const db = getSupabaseClient();
 
   for (const signal of signals) {
-    // DISABLED Cooldown guard for testing/visibility
-    /*
-    const cooldownSince = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
-    const { count: recentlyClosed } = await db
+    // Unique partial index: (pair, direction, timeframe) WHERE status IN ('approaching','active')
+    const { data: existing, error: selErr } = await db
       .from('signals')
-      .select('id', { count: 'exact', head: true })
+      .select('id, status')
       .eq('pair', signal.pair)
       .eq('direction', signal.direction)
-      .in('status', ['TP3_hit', 'stopped', 'expired'])
-      .or(`closed_at.gte.${cooldownSince},and(closed_at.is.null,updated_at.gte.${cooldownSince})`);
+      .eq('timeframe', signal.timeframe)
+      .in('status', ['approaching', 'active'])
+      .maybeSingle();
 
-    if ((recentlyClosed ?? 0) > 0) {
-      console.log(`⏳ [Pipeline] Cooldown active for ${signal.pair} ${signal.direction} — skipping`);
+    if (selErr) {
+      console.error(`❌ [Pipeline] Failed to read existing signal for ${signal.pair}:`, selErr.message);
       continue;
     }
-    */
 
+    if (existing?.status === 'active') {
+      continue;
+    }
 
-    // Insert new approaching signal with full trade plan
-    const { data: inserted, error } = await db.from('signals').insert({
+    const fullRow = {
       pair:          signal.pair,
       direction:     signal.direction,
       timeframe:     signal.timeframe,
-      status:        'approaching',
+      status:        'approaching' as const,
       score:         signal.confluenceScore,
       setup_type:    signal.setupType,
-      // Support both column name conventions used in DB
       entry_low:     signal.entryZone.low,
       entry_high:    signal.entryZone.high,
       entry_zone_low:  signal.entryZone.low,
@@ -298,62 +298,96 @@ async function persistApproachingSignals(signals: any[]): Promise<void> {
       take_profit2:  signal.takeProfit2,
       take_profit3:  signal.takeProfit3,
       distance_pct:  signal.distancePercent,
+      confidence_score: signal.confidenceScore,
+      regime_tag: signal.regimeTag,
+      quality_band: signal.qualityBand,
+      stale_after: signal.staleAfter,
       detected_at:   new Date(signal.detectedAt).toISOString(),
       expires_at:    new Date(signal.detectedAt + 48 * 60 * 60 * 1000).toISOString(),
-    }).select('id').single();
+    };
 
-    if (error) {
-      // Retry without the duplicate column names if DB schema is strict
-      const { data: inserted2, error: err2 } = await db.from('signals').insert({
-        pair:         signal.pair,
-        direction:    signal.direction,
-        timeframe:    signal.timeframe,
-        status:       'approaching',
-        score:        signal.confluenceScore,
-        setup_type:   signal.setupType,
-        entry_low:    signal.entryZone.low,
-        entry_high:   signal.entryZone.high,
-        stop_loss:    signal.stopLoss,
-        take_profit1: signal.takeProfit1,
-        take_profit2: signal.takeProfit2,
-        take_profit3: signal.takeProfit3,
-        distance_pct: signal.distancePercent,
-        detected_at:  new Date(signal.detectedAt).toISOString(),
-        expires_at:   new Date(signal.detectedAt + 48 * 60 * 60 * 1000).toISOString(),
-      }).select('id').single();
+    const slimRow = {
+      pair:         signal.pair,
+      direction:    signal.direction,
+      timeframe:    signal.timeframe,
+      status:       'approaching' as const,
+      score:        signal.confluenceScore,
+      setup_type:   signal.setupType,
+      entry_low:    signal.entryZone.low,
+      entry_high:   signal.entryZone.high,
+      stop_loss:    signal.stopLoss,
+      take_profit1: signal.takeProfit1,
+      take_profit2: signal.takeProfit2,
+      take_profit3: signal.takeProfit3,
+      distance_pct: signal.distancePercent,
+      confidence_score: signal.confidenceScore,
+      regime_tag: signal.regimeTag,
+      quality_band: signal.qualityBand,
+      stale_after: signal.staleAfter,
+      detected_at:  new Date(signal.detectedAt).toISOString(),
+      expires_at:   new Date(signal.detectedAt + 48 * 60 * 60 * 1000).toISOString(),
+    };
 
-      if (err2) {
-        console.error(`❌ [Pipeline] Failed to insert signal for ${signal.pair}:`, err2.message);
-        continue;
+    let rowId: string | null = null;
+
+    const isExistingSignal = !!existing?.id;
+
+    if (isExistingSignal) {
+      const { data: updated, error: upErr } = await db
+        .from('signals')
+        .update(fullRow)
+        .eq('id', existing.id)
+        .select('id')
+        .single();
+
+      if (upErr) {
+        const { data: updated2, error: upErr2 } = await db
+          .from('signals')
+          .update(slimRow)
+          .eq('id', existing.id)
+          .select('id')
+          .single();
+        if (upErr2) {
+          console.error(`❌ [Pipeline] Failed to update signal for ${signal.pair}:`, upErr2.message);
+          continue;
+        }
+        rowId = updated2?.id ?? null;
+      } else {
+        rowId = updated?.id ?? null;
       }
+      if (rowId) {
+        console.log(`💾 [Pipeline] ✅ Signal refreshed: ${signal.pair} — ${signal.setupType} — Score: ${signal.confluenceScore} — RR: 1:${signal.rrTp1}`);
+      }
+    } else {
+      const { data: inserted, error: insErr } = await db
+        .from('signals')
+        .insert(fullRow)
+        .select('id')
+        .single();
 
-      if (inserted2) {
+      if (insErr) {
+        const { data: inserted2, error: insErr2 } = await db
+          .from('signals')
+          .insert(slimRow)
+          .select('id')
+          .single();
+        if (insErr2) {
+          console.error(`❌ [Pipeline] Failed to insert signal for ${signal.pair}:`, insErr2.message);
+          continue;
+        }
+        rowId = inserted2?.id ?? null;
+      } else {
+        rowId = inserted?.id ?? null;
+      }
+      if (rowId) {
         console.log(`💾 [Pipeline] ✅ Signal persisted: ${signal.pair} — ${signal.setupType} — Score: ${signal.confluenceScore} — RR: 1:${signal.rrTp1}`);
-        const { broadcastApproaching } = await import('./wsServerManager');
-        broadcastApproaching({
-          signalId:    inserted2.id,
-          pair:        signal.pair,
-          direction:   signal.direction,
-          timeframe:   signal.timeframe,
-          score:       signal.confluenceScore,
-          setupType:   signal.setupType,
-          rrTp1:       signal.rrTp1,
-          distancePct: signal.distancePercent,
-          entryZone:   signal.entryZone,
-          stopLoss:    signal.stopLoss,
-          takeProfit1: signal.takeProfit1,
-          takeProfit2: signal.takeProfit2,
-          takeProfit3: signal.takeProfit3,
-        });
       }
-      continue;
     }
 
-    if (inserted) {
-      console.log(`💾 [Pipeline] ✅ Signal persisted: ${signal.pair} — ${signal.setupType} — Score: ${signal.confluenceScore} — RR: 1:${signal.rrTp1}`);
+    if (rowId) {
       const { broadcastApproaching } = await import('./wsServerManager');
       broadcastApproaching({
-        signalId:    inserted.id,
+        signalId:    rowId,
         pair:        signal.pair,
         direction:   signal.direction,
         timeframe:   signal.timeframe,
@@ -367,17 +401,73 @@ async function persistApproachingSignals(signals: any[]): Promise<void> {
         takeProfit2: signal.takeProfit2,
         takeProfit3: signal.takeProfit3,
       });
+
+      // Send push only for newly created approaching signals, not refresh updates.
+      if (!isExistingSignal) {
+        await sendPushToAllDevices({
+          title: `📡 ${signal.pair} — Approaching Zone`,
+          body: `Entry ${signal.entryZone.low.toFixed(4)}-${signal.entryZone.high.toFixed(4)} · Score ${signal.confluenceScore}/100`,
+          data: {
+            type: 'approaching',
+            signalId: rowId,
+            pair: signal.pair,
+          },
+          priority: 'high',
+        });
+      }
     }
   }
 }
 
 async function activateSignal(id: string, trigger: any): Promise<void> {
   const db = getSupabaseClient();
+  const { data: existingRow } = await db
+    .from('signals')
+    .select('detected_at')
+    .eq('id', id)
+    .single();
+  const nowIso = new Date().toISOString();
+  const latencySec = existingRow?.detected_at
+    ? Math.max(0, Math.round((Date.now() - new Date(existingRow.detected_at).getTime()) / 1000))
+    : null;
+
   await db.from('signals').update({
     status:       'active',
     score:        trigger.finalScore,
-    activated_at: new Date().toISOString(),
+    activated_at: nowIso,
+    activation_latency_sec: latencySec,
     setup_type:   `${trigger.setupType} (Confirmed: ${trigger.confirmationType})`
   }).eq('id', id);
+
+  const { data: row } = await db
+    .from('signals')
+    .select('id, pair, direction, timeframe')
+    .eq('id', id)
+    .single();
+
+  if (row) {
+    const { broadcastActivated } = await import('./wsServerManager');
+    broadcastActivated({
+      signalId: row.id,
+      pair: row.pair,
+      direction: row.direction,
+      timeframe: row.timeframe,
+      currentPrice: trigger.currentPrice,
+      setupType: trigger.setupType,
+      score: trigger.finalScore,
+    });
+
+    await sendPushToAllDevices({
+      title: `🔥 ${row.pair} — Trade Active`,
+      body: `${row.direction} confirmation hit on ${row.timeframe}`,
+      data: {
+        type: 'active',
+        signalId: row.id,
+        pair: row.pair,
+      },
+      priority: 'high',
+    });
+  }
+
   console.log(`🔥 [Pipeline] Signal Activated: ${trigger.pair} @ ${trigger.currentPrice}`);
 }

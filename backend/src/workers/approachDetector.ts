@@ -20,6 +20,7 @@ import { computeSignalScore } from '../services/signalScorer';
 import { computeTradePlan } from '../services/tradePlanner';
 import type { StructuralData, OrderBlock } from './structureScanner';
 import { getSupabaseClient } from '../services/supabaseClient';
+import { getProModeEnabled } from '../services/proModeState';
 const db = getSupabaseClient();
 
 export interface ApproachingSignal {
@@ -41,6 +42,10 @@ export interface ApproachingSignal {
   rrTp1:           number;
   rrTp2:           number;
   rrTp3:           number;
+  confidenceScore: number;
+  regimeTag:       'trend_following' | 'reversal' | 'ranging_risk' | 'high_volatility';
+  qualityBand:     'A' | 'B' | 'C';
+  staleAfter:      string;
   detectedAt:      number;
 }
 
@@ -51,6 +56,14 @@ const APPROACH_PCT_MIN    = 0.005;   // 0.5% — already touching zone edge
 const APPROACH_PCT_MAX    = 0.015;   // 1.5% — spec early warning ceiling
 const EXTENSION_LIMIT_PCT = 0.02;    // >2% past zone = entry too late (spec rule)
 const STRUCTURAL_MAX_AGE  = 4 * 60 * 60 * 1000; // Structural data freshness cap (4H)
+
+// Pro mode hard filters (env-tunable).
+const PRO_MIN_CONFIDENCE = toNumberEnv(process.env.PRO_MIN_CONFIDENCE, 78);
+const PRO_MIN_RR = toNumberEnv(process.env.PRO_MIN_RR, 2.5);
+const PRO_MAX_DISTANCE_PCT = toNumberEnv(process.env.PRO_MAX_DISTANCE_PCT, 0.012);
+const PRO_ALLOW_RANGING_RISK = (process.env.PRO_ALLOW_RANGING_RISK ?? 'false').toLowerCase() === 'true';
+const PRO_ALLOW_HIGH_VOLATILITY = (process.env.PRO_ALLOW_HIGH_VOLATILITY ?? 'false').toLowerCase() === 'true';
+const PRO_ALLOW_QUALITY_C = (process.env.PRO_ALLOW_QUALITY_C ?? 'false').toLowerCase() === 'true';
 
 export async function runApproachDetector(
   pairs: Record<string, number>
@@ -158,6 +171,10 @@ export async function runApproachDetector(
         continue;
       }
 
+      const regime = classifyMarketRegime(h4Data, d1Data, distance);
+      const adjustedScore = Math.max(0, Math.min(100, scoreResult.score + regime.scoreBias));
+      if (adjustedScore < MIN_SCORE) continue;
+
       // ── 7. Trade Planning ────────────────────────────────────────────
       const plan = computeTradePlan(pair, direction, zone.high, zone.low, h4Data, d1Data);
       if (!plan) {
@@ -181,6 +198,32 @@ export async function runApproachDetector(
 
       // ── 8. Setup Label ───────────────────────────────────────────────
       const setupType = generateSetupLabel(zone.type, scoreResult.factors, choch, h4Data.trend);
+      const confidenceScore = Math.max(
+        1,
+        Math.min(
+          100,
+          Math.round(
+            adjustedScore * 0.75 +
+            (rrTp1 >= 3 ? 10 : rrTp1 >= 2.5 ? 6 : 3) +
+            (distance <= 0.008 ? 6 : distance <= 0.012 ? 3 : 1) +
+            (choch ? 5 : 0)
+          )
+        )
+      );
+      const qualityBand: ApproachingSignal['qualityBand'] =
+        confidenceScore >= 82 ? 'A' : confidenceScore >= 72 ? 'B' : 'C';
+      const staleAfterHours = regime.tag === 'ranging_risk' ? 12 : regime.tag === 'high_volatility' ? 8 : 24;
+      const staleAfter = new Date(Date.now() + staleAfterHours * 60 * 60 * 1000).toISOString();
+
+      // Pro mode: tighten quality gate for better win consistency.
+      if (getProModeEnabled()) {
+        if (confidenceScore < PRO_MIN_CONFIDENCE) continue;
+        if (rrTp1 < PRO_MIN_RR) continue;
+        if (distance > PRO_MAX_DISTANCE_PCT) continue;
+        if (!PRO_ALLOW_QUALITY_C && qualityBand === 'C') continue;
+        if (!PRO_ALLOW_RANGING_RISK && regime.tag === 'ranging_risk') continue;
+        if (!PRO_ALLOW_HIGH_VOLATILITY && regime.tag === 'high_volatility') continue;
+      }
 
       candidates.push({
         pair,
@@ -191,7 +234,7 @@ export async function runApproachDetector(
         zoneLow:   zone.low,
         currentPrice,
         distancePercent: Math.round(distance * 10000) / 100,
-        confluenceScore: scoreResult.score,
+        confluenceScore: adjustedScore,
         setupType,
         entryZone:   { low: zone.low, high: zone.high },
         stopLoss:    plan.stopLoss,
@@ -201,6 +244,10 @@ export async function runApproachDetector(
         rrTp1:       Math.round(rrTp1 * 10) / 10,
         rrTp2:       Math.round(rrTp2 * 10) / 10,
         rrTp3:       Math.round(rrTp3 * 10) / 10,
+        confidenceScore,
+        regimeTag: regime.tag,
+        qualityBand,
+        staleAfter,
         detectedAt:  Date.now(),
         _distance: distance,
         _zonePriority: zone.type === 'OB' ? 3 : zone.type === 'SD' ? 2 : zone.type === 'FVG' ? 1 : 0,
@@ -267,4 +314,32 @@ function generateSetupLabel(
   label += ' — Approaching';
 
   return label;
+}
+
+function classifyMarketRegime(
+  h4Data: StructuralData,
+  d1Data: StructuralData | null,
+  distanceToZone: number
+): { tag: ApproachingSignal['regimeTag']; scoreBias: number } {
+  const h4Trend = h4Data.trend;
+  const d1Trend = d1Data?.trend ?? 'ranging';
+  const trendAligned = h4Trend !== 'ranging' && h4Trend === d1Trend;
+  const hasRecentChoch = h4Data.choch;
+  const highLiquiditySweepDensity = (h4Data.liquidityPools?.filter(l => l.swept).length ?? 0) >= 3;
+
+  if (hasRecentChoch) {
+    return { tag: 'reversal', scoreBias: 4 };
+  }
+  if (!trendAligned && h4Trend === 'ranging') {
+    return { tag: 'ranging_risk', scoreBias: -8 };
+  }
+  if (highLiquiditySweepDensity && distanceToZone > 0.012) {
+    return { tag: 'high_volatility', scoreBias: -5 };
+  }
+  return { tag: 'trend_following', scoreBias: 3 };
+}
+
+function toNumberEnv(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }

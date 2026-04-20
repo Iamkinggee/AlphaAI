@@ -23,7 +23,22 @@ const app = express();
 
 // ── Middleware ────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors());
+const corsOrigins =
+  typeof config.CORS_ORIGINS === 'string' && config.CORS_ORIGINS.trim().length > 0
+    ? config.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+    : null;
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow non-browser clients (no Origin header) like mobile apps, server-to-server, curl.
+    if (!origin) return callback(null, true);
+    // In dev/test, allow any origin for convenience if no allowlist provided.
+    if (config.NODE_ENV !== 'production' && !corsOrigins) return callback(null, true);
+    if (corsOrigins && corsOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
 app.use(express.json());
 app.use(morgan(config.NODE_ENV === 'development' ? 'dev' : 'combined'));
 

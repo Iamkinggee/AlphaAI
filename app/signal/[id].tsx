@@ -136,6 +136,19 @@ export default function SignalDetailScreen() {
   const accentColor = isLong ? theme.bullish : theme.bearish;
   const timeAgo = formatRelativeTime(signal.createdAt);
   const watched = isWatched(signal.pair);
+  const confidence = signal.confidenceScore ?? signal.score;
+  const qualityBand = signal.qualityBand ?? (confidence >= 82 ? 'A' : confidence >= 72 ? 'B' : 'C');
+  const staleText = signal.staleAfter
+    ? (() => {
+        const diffMs = new Date(signal.staleAfter).getTime() - Date.now();
+        if (Number.isNaN(diffMs)) return 'N/A';
+        if (diffMs <= 0) return 'Expired by staleness';
+        const mins = Math.floor(diffMs / 60_000);
+        const hrs = Math.floor(mins / 60);
+        const rem = mins % 60;
+        return hrs > 0 ? `${hrs}h ${rem}m` : `${mins}m`;
+      })()
+    : 'N/A';
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
@@ -173,6 +186,33 @@ export default function SignalDetailScreen() {
               <Text style={[styles.statVal, { color: item.color, fontFamily: 'Inter-Bold' }]} numberOfLines={1}>{item.value}</Text>
             </View>
           ))}
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(110).duration(400)}
+          style={[styles.telemetryCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text style={[styles.telemetryTitle, { color: theme.textPrimary, fontFamily: 'Inter-SemiBold' }]}>
+            Engine Telemetry
+          </Text>
+          <View style={styles.telemetryGrid}>
+            <View style={styles.telemetryCell}>
+              <Text style={[styles.telemetryLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>Confidence</Text>
+              <Text style={[styles.telemetryValue, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>{confidence}/100</Text>
+            </View>
+            <View style={styles.telemetryCell}>
+              <Text style={[styles.telemetryLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>Quality</Text>
+              <Text style={[styles.telemetryValue, { color: theme.accentPrimary, fontFamily: 'Inter-Bold' }]}>{qualityBand}</Text>
+            </View>
+            <View style={styles.telemetryCell}>
+              <Text style={[styles.telemetryLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>Regime</Text>
+              <Text style={[styles.telemetryValue, { color: theme.textPrimary, fontFamily: 'Inter-Bold', textTransform: 'capitalize' }]}>
+                {String(signal.regimeTag ?? 'trend_following').replace('_', ' ')}
+              </Text>
+            </View>
+            <View style={styles.telemetryCell}>
+              <Text style={[styles.telemetryLabel, { color: theme.textTertiary, fontFamily: 'Inter-Regular' }]}>Stale In</Text>
+              <Text style={[styles.telemetryValue, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>{staleText}</Text>
+            </View>
+          </View>
         </Animated.View>
 
         {/* AI Analysis panel */}
@@ -256,6 +296,12 @@ const styles = StyleSheet.create({
   statItem:       { flex: 1, padding: 14, alignItems: 'center' },
   statLabel:      { fontSize: 13, marginBottom: 4 },
   statVal:        { fontSize: 18 },
+  telemetryCard:  { borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 14 },
+  telemetryTitle: { fontSize: 16, marginBottom: 10 },
+  telemetryGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  telemetryCell:  { width: '47%', borderRadius: 10, paddingVertical: 8 },
+  telemetryLabel: { fontSize: 12, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
+  telemetryValue: { fontSize: 16 },
   aiToggle:       { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 10 },
   aiToggleText:   { flex: 1, fontSize: 16 },
   aiCard:         { borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 14 },

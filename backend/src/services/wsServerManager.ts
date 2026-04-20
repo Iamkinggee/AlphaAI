@@ -82,7 +82,9 @@ export function attachWsServer(server: Server): void {
       console.log(`🔌 [WS] Client disconnected — total: ${clients.size}`);
     });
 
-    ws.on('error', (err) => console.error('[WS] Client error:', err.message));
+    ws.on('error', (err) => {
+      console.error('[WS] Client error:', err.message);
+    });
   });
 
   // Start heartbeat interval

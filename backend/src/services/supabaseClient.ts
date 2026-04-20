@@ -37,7 +37,9 @@ function createMockSupabase(): SupabaseClient {
   const singleResult: MockResult = { data: null, error: new Error('Mock Supabase — no credentials'), count: 0 };
 
   const createQuery = () => {
-    const query: Record<string, (...args: unknown[]) => unknown> = {};
+    // Dev-only loose mock: keep typing permissive so backend can compile without credentials.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const query: any = {};
     const chainMethods = [
       'select', 'insert', 'update', 'delete',
       'eq', 'neq', 'in', 'gte', 'lte', 'gt', 'lt',

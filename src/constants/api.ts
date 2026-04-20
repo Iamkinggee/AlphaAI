@@ -69,6 +69,7 @@ export const API = {
     PULSE:    '/market/pulse',
     PAIRS:    '/market/pairs',         // live 24h stats for all top-80 pairs
     UNIVERSE: '/market/universe',      // full pair list (symbol + pair string)
+    PRO_MODE: '/market/pro-mode',
     CANDLES:  (pair: string) => `/market/candles/${encodeURIComponent(pair)}`,
     PRICE:    (pair: string) => `/market/price/${encodeURIComponent(pair)}`,
   },

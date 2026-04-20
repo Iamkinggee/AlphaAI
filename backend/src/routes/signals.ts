@@ -11,6 +11,7 @@
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
 import { generateAIResponse, GroqNotConfiguredError } from '../services/openaiService';
+import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -32,6 +33,9 @@ function normalizeSignal(row: Record<string, any>) {
   const tp2       = Number(row.take_profit2    ?? row.take_profit_2 ?? row.tp2)       || 0;
   const tp3       = Number(row.take_profit3    ?? row.take_profit_3 ?? row.tp3)       || 0;
   const distance  = Number(row.distance_pct)                                           || 0;
+  const confidenceScore = Number(row.confidence_score ?? row.score) || 0;
+  const regimeTag = typeof row.regime_tag === 'string' ? row.regime_tag : 'trend_following';
+  const qualityBand = typeof row.quality_band === 'string' ? row.quality_band : (confidenceScore >= 82 ? 'A' : confidenceScore >= 72 ? 'B' : 'C');
 
   // R:R calculation from entry midpoint
   const entryMid  = (entryLow + entryHigh) / 2;
@@ -64,6 +68,9 @@ function normalizeSignal(row: Record<string, any>) {
     timeframe:   row.timeframe,
     status:      row.status,
     score:       Number(row.score) || 0,
+    confidenceScore,
+    regimeTag,
+    qualityBand,
     setupType:   row.setup_type ?? `${row.timeframe} SMC Setup`,
 
     entryZone: {
@@ -88,10 +95,13 @@ function normalizeSignal(row: Record<string, any>) {
     createdAt:   detectedAt.toISOString(),
     expiresAt:   expiresAt.toISOString(),
     activatedAt: activatedAt?.toISOString() ?? null,
+    staleAfter:  row.stale_after ? new Date(row.stale_after).toISOString() : null,
     timeElapsed,
     expiresIn,
 
     // P&L only if active / TP hit
+    currentPrice:        row.current_price ? Number(row.current_price) : undefined,
+    currentPriceFormatted: row.current_price ? formatPrice(Number(row.current_price)) : undefined,
     currentPnl:          row.current_pnl   ? Number(row.current_pnl)   : undefined,
     currentPnlFormatted: row.current_pnl   ? `${Number(row.current_pnl) >= 0 ? '+' : ''}${Number(row.current_pnl).toFixed(2)}%` : undefined,
   };
@@ -285,7 +295,7 @@ router.get('/history', async (req: Request, res: Response) => {
  * DELETE /signals/history
  * Removes all resolved/completed signals from the database.
  */
-router.delete('/history', async (_req: Request, res: Response) => {
+router.delete('/history', requireAdmin, async (_req: Request, res: Response) => {
   try {
     const db = getSupabaseClient();
     const { error } = await db

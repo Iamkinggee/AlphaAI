@@ -10,6 +10,8 @@
 import { Router, Request, Response } from 'express';
 import { fetchCandles, fetch24hStats, fetchBulk24hStats } from '../services/marketData/binanceService';
 import { getTopPairs, PairSpec } from '../services/marketData/pairUniverse';
+import { getProModeEnabled, setProModeEnabled } from '../services/proModeState';
+import { requireAdmin } from '../middleware/auth';
 
 const router = Router();
 
@@ -106,6 +108,7 @@ router.get('/pulse', async (_req: Request, res: Response) => {
       totalMarketCap:  global.totalMarketCap,
       totalMarketCapRaw: global.totalMarketCapRaw,
       volume24h:       global.volume24h,
+      proModeEnabled:  getProModeEnabled(),
       lastUpdated:     new Date().toISOString(),
     };
 
@@ -245,6 +248,22 @@ router.get('/universe', async (_req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : 'Unknown error';
     res.status(500).json({ success: false, error: message });
   }
+});
+
+/**
+ * POST /market/pro-mode
+ * Runtime toggle for strict signal filtering mode.
+ * Body: { enabled: boolean }
+ */
+router.post('/pro-mode', requireAdmin, async (req: Request, res: Response) => {
+  const { enabled } = req.body as { enabled?: unknown };
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ success: false, error: 'enabled (boolean) is required' });
+    return;
+  }
+  setProModeEnabled(enabled);
+  pulseCache = null;
+  res.json({ success: true, data: { proModeEnabled: getProModeEnabled() } });
 });
 
 export default router;

@@ -37,6 +37,9 @@ export interface Signal {
   timeframe: Timeframe;
   status: SignalStatus;
   score: number;          // 0–100 confluence score
+  confidenceScore?: number;
+  regimeTag?: 'trend_following' | 'reversal' | 'ranging_risk' | 'high_volatility' | string;
+  qualityBand?: 'A' | 'B' | 'C' | string;
   setupType: string;      // human-readable description
 
   // Price levels
@@ -55,10 +58,13 @@ export interface Signal {
   distanceFormatted: string;
   createdAt: string;        // ISO date string
   expiresAt: string;        // ISO date string
+  staleAfter?: string | null;
   timeElapsed: string;      // human-readable "3 minutes ago"
   expiresIn: string;        // human-readable "47h 57m"
 
   // Optional live PnL (active trades)
+  currentPrice?: number;
+  currentPriceFormatted?: string;
   currentPnl?: number;
   currentPnlFormatted?: string;
 }

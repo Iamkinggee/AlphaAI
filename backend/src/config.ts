@@ -22,7 +22,33 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().optional(),
   
   // Security
-  JWT_SECRET: z.string().min(32, "JWT_SECRET should be at least 32 characters").default('super-secret-development-key-alpha-ai'),
+  JWT_SECRET: z.string().min(32, 'JWT_SECRET should be at least 32 characters').optional(),
+
+  // API hardening
+  // Comma-separated list of allowed origins for CORS in production. Example:
+  // https://alphaai.app,https://staging.alphaai.app
+  CORS_ORIGINS: z.string().optional(),
+
+  // Admin-only maintenance endpoints (server-side / internal tooling).
+  // Required for production for endpoints guarded by requireAdmin().
+  ADMIN_API_KEY: z.string().min(16).optional(),
+}).superRefine((val, ctx) => {
+  if (val.NODE_ENV === 'production') {
+    if (!val.JWT_SECRET) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['JWT_SECRET'],
+        message: 'JWT_SECRET is required in production (min 32 chars)',
+      });
+    }
+    if (!val.CORS_ORIGINS || val.CORS_ORIGINS.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CORS_ORIGINS'],
+        message: 'CORS_ORIGINS is required in production (comma-separated allowlist)',
+      });
+    }
+  }
 });
 
 const _env = envSchema.safeParse(process.env);

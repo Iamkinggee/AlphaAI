@@ -14,6 +14,7 @@ import { Router, Request, Response } from 'express';
 import { config } from '../config';
 import { getSupabaseClient } from '../services/supabaseClient';
 import { generateAIResponse, GroqNotConfiguredError, type ChatMessage } from '../services/openaiService';
+import { requireAuth, type AuthedRequest } from '../middleware/auth';
 import {
   memoryAppendMessage,
   memoryCreateSession,
@@ -31,33 +32,25 @@ function isMemoryMode(): boolean {
   return !config.SUPABASE_URL || !config.SUPABASE_SERVICE_ROLE_KEY;
 }
 
-/**
- * Extract user ID from the request.
- * 1. Tries to verify the Supabase JWT from the Authorization header.
- * 2. If the token starts with "dev_" (local dev session), returns a stable dev ID.
- * 3. Falls back to the x-user-id header (legacy support).
- */
-async function getUserId(req: Request): Promise<string | null> {
-  const headerUserId = req.headers['x-user-id'] as string | undefined;
-  if (headerUserId) return headerUserId;
+function bearerToken(req: Request): string | null {
+  const h = req.headers.authorization;
+  if (!h?.startsWith('Bearer ')) return null;
+  return h.slice(7);
+}
 
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) return null;
+/** Expo / local dev tokens — not UUIDs and have no `profiles` row; chat tables require UUID `user_id`. */
+function isDevBearerToken(req: Request): boolean {
+  const t = bearerToken(req);
+  return !!t && t.startsWith('dev_');
+}
 
-  const token = authHeader.slice(7);
+/** Persist chat in-process when Supabase is off, or for `dev_*` bearer sessions. */
+function usesChatMemoryBackend(req: Request): boolean {
+  return isMemoryMode() || isDevBearerToken(req);
+}
 
-  if (token.startsWith('dev_')) {
-    return DEV_USER_ID;
-  }
-
-  try {
-    const db = getSupabaseClient();
-    const { data, error } = await db.auth.getUser(token);
-    if (error || !data?.user) return null;
-    return data.user.id;
-  } catch {
-    return null;
-  }
+function useMemoryChatForSession(sessionId: string): boolean {
+  return isMemoryMode() || !!memoryGetSession(sessionId);
 }
 
 /** Stored in DB as a bootstrap row; Groq uses the canonical prompt in openaiService. */
@@ -67,12 +60,25 @@ const SESSION_BOOTSTRAP_MARKDOWN = `AlphaAI chat session — SMC / signals conte
  * POST /chat/sessions — Create a new session
  */
 router.post('/sessions', async (req: Request, res: Response) => {
-  const userId = await getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+  // Allow memory/dev tokens for local dev UX, but never allow them in production.
+  const token = bearerToken(req);
+  const canUseDevToken = !!token && token.startsWith('dev_') && config.NODE_ENV !== 'production';
+  if (canUseDevToken) {
+    const userId = DEV_USER_ID;
+    const { title = 'New Analysis', signalContextId: _signalContextId } = req.body;
+    const session = memoryCreateSession(userId, title, SESSION_BOOTSTRAP_MARKDOWN);
+    res.status(201).json({ success: true, data: session });
+    return;
+  }
+
+  // Normal path: require real Supabase auth
+  await new Promise<void>((resolve) => requireAuth(req, res, () => resolve()));
+  if (!('user' in (req as any))) return;
+  const userId = (req as AuthedRequest).user.id;
 
   const { title = 'New Analysis', signalContextId: _signalContextId } = req.body;
 
-  if (isMemoryMode()) {
+  if (usesChatMemoryBackend(req)) {
     const session = memoryCreateSession(userId, title, SESSION_BOOTSTRAP_MARKDOWN);
     res.status(201).json({ success: true, data: session });
     return;
@@ -102,10 +108,17 @@ router.post('/sessions', async (req: Request, res: Response) => {
  * GET /chat/sessions — List user sessions
  */
 router.get('/sessions', async (req: Request, res: Response) => {
-  const userId = await getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+  const token = bearerToken(req);
+  const canUseDevToken = !!token && token.startsWith('dev_') && config.NODE_ENV !== 'production';
+  if (canUseDevToken) {
+    res.json({ success: true, data: memoryListSessions(DEV_USER_ID) });
+    return;
+  }
+  await new Promise<void>((resolve) => requireAuth(req, res, () => resolve()));
+  if (!('user' in (req as any))) return;
+  const userId = (req as AuthedRequest).user.id;
 
-  if (isMemoryMode()) {
+  if (usesChatMemoryBackend(req)) {
     res.json({ success: true, data: memoryListSessions(userId) });
     return;
   }
@@ -126,12 +139,32 @@ router.get('/sessions', async (req: Request, res: Response) => {
  * GET /chat/sessions/:id — Get session message history
  */
 router.get('/sessions/:id', async (req: Request, res: Response) => {
-  const userId = await getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+  const token = bearerToken(req);
+  const canUseDevToken = !!token && token.startsWith('dev_') && config.NODE_ENV !== 'production';
+  if (canUseDevToken) {
+    const userId = DEV_USER_ID;
+    const sessionId = String(req.params.id);
+    const sess = memoryGetSession(sessionId);
+    if (!sess || sess.user_id !== userId) { res.status(404).json({ success: false, error: 'Not found' }); return; }
+    const rows = memoryGetMessages(sessionId, true);
+    res.json({
+      success: true,
+      data: rows.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        created_at: m.created_at,
+      })),
+    });
+    return;
+  }
+  await new Promise<void>((resolve) => requireAuth(req, res, () => resolve()));
+  if (!('user' in (req as any))) return;
+  const userId = (req as AuthedRequest).user.id;
 
-  const sessionId = req.params.id;
+  const sessionId = String(req.params.id);
 
-  if (isMemoryMode()) {
+  if (useMemoryChatForSession(sessionId) || isDevBearerToken(req)) {
     const sess = memoryGetSession(sessionId);
     if (!sess || sess.user_id !== userId) { res.status(404).json({ success: false, error: 'Not found' }); return; }
     const rows = memoryGetMessages(sessionId, true);
@@ -164,19 +197,67 @@ router.get('/sessions/:id', async (req: Request, res: Response) => {
  * Body: { content: string, appContext?: string } — optional appContext = live signals summary from the client
  */
 router.post('/sessions/:id', async (req: Request, res: Response) => {
-  const userId = await getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+  const token = bearerToken(req);
+  const canUseDevToken = !!token && token.startsWith('dev_') && config.NODE_ENV !== 'production';
+  if (canUseDevToken) {
+    const userId = DEV_USER_ID;
+    const { content, appContext } = req.body as { content?: string; appContext?: string };
+    if (!content?.trim()) { res.status(400).json({ success: false, error: 'content is required' }); return; }
+    const sessionId = String(req.params.id);
+    const trimmed = content.trim();
+    const contextBlock =
+      typeof appContext === 'string' && appContext.trim().length > 0 ? appContext.trim() : undefined;
+
+    const sess = memoryGetSession(sessionId);
+    if (!sess || sess.user_id !== userId) { res.status(404).json({ success: false, error: 'Not found' }); return; }
+
+    memoryAppendMessage(sessionId, userId, 'user', trimmed);
+    const historyRows = memoryHistoryForAi(sessionId, 14);
+    const history: ChatMessage[] = historyRows.map((m) => ({
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.content,
+    }));
+
+    const { content: aiResponse, tokensUsed } = await generateAIResponse(history, {
+      extraSystemContext: contextBlock,
+    });
+
+    const aiMsg = memoryAppendMessage(sessionId, userId, 'assistant', aiResponse, tokensUsed);
+    if (!aiMsg) {
+      res.status(500).json({ success: false, error: 'Failed to save assistant message' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        message: {
+          id: aiMsg.id,
+          role: aiMsg.role,
+          content: aiMsg.content,
+          created_at: aiMsg.created_at,
+          tokens_used: aiMsg.tokens_used,
+        },
+        response: aiResponse,
+      },
+    });
+    return;
+  }
+
+  await new Promise<void>((resolve) => requireAuth(req, res, () => resolve()));
+  if (!('user' in (req as any))) return;
+  const userId = (req as AuthedRequest).user.id;
 
   const { content, appContext } = req.body as { content?: string; appContext?: string };
   if (!content?.trim()) { res.status(400).json({ success: false, error: 'content is required' }); return; }
 
-  const sessionId = req.params.id;
+  const sessionId = String(req.params.id);
   const trimmed = content.trim();
   const contextBlock =
     typeof appContext === 'string' && appContext.trim().length > 0 ? appContext.trim() : undefined;
 
   try {
-    if (isMemoryMode()) {
+    if (useMemoryChatForSession(sessionId) || isDevBearerToken(req)) {
       const sess = memoryGetSession(sessionId);
       if (!sess || sess.user_id !== userId) { res.status(404).json({ success: false, error: 'Not found' }); return; }
 
@@ -216,12 +297,16 @@ router.post('/sessions/:id', async (req: Request, res: Response) => {
 
     const db = getSupabaseClient();
 
-    await db.from('chat_messages').insert({
+    const { error: userMsgErr } = await db.from('chat_messages').insert({
       session_id: sessionId,
       user_id: userId,
       role: 'user',
       content: trimmed,
     });
+    if (userMsgErr) {
+      res.status(400).json({ success: false, error: userMsgErr.message });
+      return;
+    }
 
     const { data: history } = await db
       .from('chat_messages')

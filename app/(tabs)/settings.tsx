@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Switch,
   Pressable, Alert, TouchableOpacity,
@@ -10,6 +10,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/src/contexts/ThemeContext';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { useAuth } from '@/src/hooks';
+import { apiClient } from '@/src/services/apiClient';
+import { API } from '@/src/constants/api';
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -58,6 +60,8 @@ export default function SettingsScreen() {
   const router  = useRouter();
   const insets  = useSafeAreaInsets();
   const { user, signOut } = useAuth();
+  const [proModeEnabled, setProModeEnabled] = useState<boolean | null>(null);
+  const [isProModeSaving, setIsProModeSaving] = useState(false);
 
   // ── Notification settings wired directly to the auth store ──────────
   // This is the single source of truth — pushNotifications.ts reads from
@@ -100,6 +104,41 @@ export default function SettingsScreen() {
 
   const initials = displayName.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 2);
 
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; data?: { proModeEnabled?: boolean } }>(API.MARKET.PULSE);
+        if (!alive || !res.success) return;
+        if (typeof res.data?.proModeEnabled === 'boolean') {
+          setProModeEnabled(res.data.proModeEnabled);
+        }
+      } catch {
+        // Silent fallback: keep settings screen responsive when backend is unavailable.
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const toggleProMode = useCallback(async (next: boolean) => {
+    setProModeEnabled(next);
+    setIsProModeSaving(true);
+    try {
+      const res = await apiClient.post<{ success: boolean; data?: { proModeEnabled?: boolean } }>(
+        API.MARKET.PRO_MODE,
+        { enabled: next }
+      );
+      if (res.success && typeof res.data?.proModeEnabled === 'boolean') {
+        setProModeEnabled(res.data.proModeEnabled);
+      }
+    } catch {
+      setProModeEnabled((prev) => (typeof prev === 'boolean' ? !prev : null));
+      Alert.alert('Update Failed', 'Could not update Pro Mode right now. Please try again.');
+    } finally {
+      setIsProModeSaving(false);
+    }
+  }, []);
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <ScrollView
@@ -124,8 +163,41 @@ export default function SettingsScreen() {
               {user?.email ?? 'Not signed in'}
             </Text>
           </View>
-          <View style={[styles.tierBadge, { backgroundColor: theme.accentPrimaryDim, borderColor: theme.accentPrimary + '40' }]}>
-            <Text style={[styles.tierText, { color: theme.accentPrimary, fontFamily: 'Inter-SemiBold' }]}>PRO</Text>
+          <View
+            style={[
+              styles.tierBadge,
+              {
+                backgroundColor:
+                  proModeEnabled === null
+                    ? theme.surface
+                    : proModeEnabled
+                      ? theme.accentPrimaryDim
+                      : theme.surface,
+                borderColor:
+                  proModeEnabled === null
+                    ? theme.border
+                    : proModeEnabled
+                      ? theme.accentPrimary + '40'
+                      : theme.textTertiary + '40',
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.tierText,
+                {
+                  color:
+                    proModeEnabled === null
+                      ? theme.textTertiary
+                      : proModeEnabled
+                        ? theme.accentPrimary
+                        : theme.textTertiary,
+                  fontFamily: 'Inter-SemiBold',
+                },
+              ]}
+            >
+              {proModeEnabled === null ? '...' : proModeEnabled ? 'PRO' : 'STD'}
+            </Text>
           </View>
         </Animated.View>
 
@@ -213,7 +285,21 @@ export default function SettingsScreen() {
         <Animated.View entering={FadeInDown.delay(300).duration(400)} style={styles.section}>
           <Text style={[styles.sectionTitle, { color: theme.textTertiary, fontFamily: 'Inter-SemiBold' }]}>ABOUT</Text>
           <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <SettingRow icon="school" label="How to Use AlphaAI" sublabel="Guide & trading tips" chevron onPress={() => router.push('/guide')} iconColor="#6C4BEF" />
+            <SettingRow icon="school" label="How to Use AlphaAI" sublabel="Guide, Pro Mode filters & tradeable coins" chevron onPress={() => router.push('/guide')} iconColor="#6C4BEF" />
+            <SettingRow
+              icon="shield-checkmark"
+              label="Pro Mode"
+              sublabel={
+                proModeEnabled === null
+                  ? 'Checking backend mode...'
+                  : proModeEnabled
+                    ? (isProModeSaving ? 'Saving... strict filters active' : 'ON — strict filters active')
+                    : (isProModeSaving ? 'Saving... wider signal intake' : 'OFF — wider signal intake')
+              }
+              iconColor={proModeEnabled === false ? '#9AA5B1' : '#00B67A'}
+              value={!!proModeEnabled}
+              onToggle={toggleProMode}
+            />
             <SettingRow icon="information-circle" label="App Version" sublabel="AlphaAI v1.0.0" />
             <SettingRow icon="document-text" label="Terms of Service" chevron onPress={() => router.push('/terms')} />
             <SettingRow icon="shield-checkmark" label="Privacy Policy" chevron onPress={() => router.push('/privacy')} iconColor="#00B67A" />

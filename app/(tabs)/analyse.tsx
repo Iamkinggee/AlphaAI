@@ -6,7 +6,7 @@
  *   • Stays aligned on scroll, zoom, resize
  *   • Timeframes, tools, 50+ searchable pairs
  */
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, Pressable,
   ScrollView, ActivityIndicator,
@@ -20,6 +20,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useTheme } from '@/src/contexts/ThemeContext';
 import { useSignals } from '@/src/hooks';
 import { apiClient } from '@/src/services/apiClient';
+import { API } from '@/src/constants/api';
 
 // ── Pairs ───────────────────────────────────────────────────────────
 const ALL_PAIRS = [
@@ -35,7 +36,11 @@ const ALL_PAIRS = [
   'TIA/USDT','JUP/USDT','PYTH/USDT','FIL/USDT','HBAR/USDT',
   'ALGO/USDT','ICP/USDT','VET/USDT','EOS/USDT','FLOW/USDT',
 ];
-const POPULAR = ['BTC/USDT','ETH/USDT','SOL/USDT','BNB/USDT','XRP/USDT','LINK/USDT','AVAX/USDT','OP/USDT','ARB/USDT','INJ/USDT'];
+
+interface UniversePair {
+  pair: string;
+  symbol: string;
+}
 
 const TIMEFRAMES = [
   { label:'1m', interval:'1m' },{ label:'5m', interval:'5m' },
@@ -365,10 +370,20 @@ function buildHtml(pair: string, isDark: boolean, interval: string): string {
     rawCandles = [];
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    fetch('https://api.binance.com/api/v3/klines?symbol='+sym+'&interval='+intv+'&limit=300')
-      .then(function(r){ return r.json(); })
+    fetchKlines(sym, intv)
       .then(function(raw){
-        if(!Array.isArray(raw)){ showSpinner(false); return; }
+        if(!Array.isArray(raw) || raw.length < 20){
+          showSpinner(false);
+          if(window.ReactNativeWebView){
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type:'chart_error',
+              pair:sym,
+              interval:intv,
+              message:'No valid candle data returned for this token/timeframe.'
+            }));
+          }
+          return;
+        }
 
         rawCandles = raw.map(function(k){
           return { time:Math.floor(k[0]/1000), open:+k[1], high:+k[2], low:+k[3], close:+k[4] };
@@ -402,7 +417,37 @@ function buildHtml(pair: string, isDark: boolean, interval: string): string {
           window.ReactNativeWebView.postMessage(JSON.stringify({type:'loaded',pair:sym,interval:intv}));
         }
       })
-      .catch(function(err){ showSpinner(false); });
+      .catch(function(){
+        showSpinner(false);
+        if(window.ReactNativeWebView){
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type:'chart_error',
+            pair:sym,
+            interval:intv,
+            message:'Could not load candles for this token. Try another timeframe or token.'
+          }));
+        }
+      });
+  }
+
+  function fetchKlines(sym, intv){
+    var endpoints = [
+      'https://fapi.binance.com/fapi/v1/klines?symbol='+sym+'&interval='+intv+'&limit=300',
+      'https://api.binance.com/api/v3/klines?symbol='+sym+'&interval='+intv+'&limit=300'
+    ];
+    return new Promise(function(resolve, reject){
+      function tryEndpoint(i){
+        if(i >= endpoints.length){ reject(new Error('No kline source available')); return; }
+        fetch(endpoints[i])
+          .then(function(r){ return r.json(); })
+          .then(function(raw){
+            if(Array.isArray(raw) && raw.length > 0){ resolve(raw); return; }
+            tryEndpoint(i + 1);
+          })
+          .catch(function(){ tryEndpoint(i + 1); });
+      }
+      tryEndpoint(0);
+    });
   }
 
   loadData(curPair, curInterval);
@@ -485,6 +530,7 @@ export default function AnalyseScreen() {
   const [setup,      setSetup]      = useState<SMCSetup | null>(null);
   const [showLevels, setShowLevels] = useState(true);
   const [activeTool, setActiveTool] = useState<'crosshair'|'magnet'>('crosshair');
+  const [supportedPairs, setSupportedPairs] = useState<string[]>(ALL_PAIRS);
   // Auto-computed levels from WebView ATR engine (no button needed)
   const [autoLevels, setAutoLevels] = useState<{
     direction: 'LONG'|'SHORT'; entry: number;
@@ -493,6 +539,35 @@ export default function AnalyseScreen() {
 
   const webviewRef = useRef<WebViewType>(null);
   const { signals } = useSignals();
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      try {
+        const res = await apiClient.get<{ success: boolean; data?: UniversePair[] }>(API.MARKET.UNIVERSE);
+        if (!alive || !res.success || !Array.isArray(res.data) || res.data.length === 0) return;
+
+        const dynamicPairs = res.data
+          .map(item => item.pair)
+          .filter((p): p is string => typeof p === 'string' && p.endsWith('/USDT'));
+
+        if (dynamicPairs.length === 0) return;
+
+        const unique = Array.from(new Set(dynamicPairs));
+
+        setSupportedPairs(unique);
+      } catch {
+        console.warn('[Analyse] Failed to load pair universe, using fallback list');
+      }
+    })();
+
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    setSupportedPairs(prev => (pair && !prev.includes(pair) ? [pair, ...prev] : prev));
+  }, [pair]);
 
   const existingSignal = useMemo(
     () => signals.find(s => s.pair === pair && (s.status === 'active' || s.status === 'approaching')),
@@ -559,6 +634,10 @@ export default function AnalyseScreen() {
           tp3:       msg.tp3,
           atr:       msg.atr,
         });
+      } else if (msg.type === 'chart_error') {
+        setAutoLevels(null);
+        setSetup(null);
+        setAiText(`⚠️ ${msg.message ?? 'Chart data unavailable for this token right now.'}`);
       }
     } catch { /* ignore non-JSON */ }
   }, []);
@@ -647,8 +726,8 @@ export default function AnalyseScreen() {
   }, [pair, timeframe, autoLevels, showLevels, inject, aiLoading]);
 
   const filteredPairs = useMemo(() =>
-    search.length > 0 ? ALL_PAIRS.filter(p => p.toLowerCase().includes(search.toLowerCase())) : POPULAR,
-    [search]
+    supportedPairs.filter(p => p.toLowerCase().includes(search.toLowerCase())),
+    [search, supportedPairs]
   );
 
   return (

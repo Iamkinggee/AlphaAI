@@ -8,21 +8,15 @@
  */
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
+import { requireAuth, type AuthedRequest } from '../middleware/auth';
 
 const router = Router();
-
-/** Extract user ID from Authorization header (placeholder — full JWT middleware Phase 5) */
-function getUserId(req: Request): string | null {
-  // TODO: Replace with proper JWT middleware
-  return req.headers['x-user-id'] as string ?? null;
-}
 
 /**
  * GET /journal
  */
-router.get('/', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.get('/', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { result, limit = '50', offset = '0' } = req.query;
   const db = getSupabaseClient();
@@ -47,9 +41,8 @@ router.get('/', async (req: Request, res: Response) => {
 /**
  * GET /journal/stats
  */
-router.get('/stats', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.get('/stats', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const db = getSupabaseClient();
   const { data, error } = await db
@@ -84,9 +77,8 @@ router.get('/stats', async (req: Request, res: Response) => {
 /**
  * POST /journal
  */
-router.post('/', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.post('/', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { pair, direction, timeframe, entryPrice, exitPrice, result, pnlPercent, rrAchieved, setupNotes } = req.body;
 
@@ -119,9 +111,8 @@ router.post('/', async (req: Request, res: Response) => {
 /**
  * PATCH /journal/:id
  */
-router.patch('/:id', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.patch('/:id', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { id } = req.params;
   const db = getSupabaseClient();
@@ -142,9 +133,8 @@ router.patch('/:id', async (req: Request, res: Response) => {
 /**
  * DELETE /journal/:id
  */
-router.delete('/:id', async (req: Request, res: Response) => {
-  const userId = getUserId(req);
-  if (!userId) { res.status(401).json({ success: false, error: 'Unauthorised' }); return; }
+router.delete('/:id', requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as AuthedRequest).user.id;
 
   const { id } = req.params;
   const db = getSupabaseClient();
