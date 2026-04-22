@@ -16,7 +16,7 @@ import { API } from '@/src/constants/api';
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
 
 function SettingRow({
-  icon, label, sublabel, value, onToggle, onPress, chevron, iconColor,
+  icon, label, sublabel, value, onToggle, onPress, chevron, iconColor, disabled = false,
 }: {
   icon: IoniconsName;
   label: string;
@@ -26,12 +26,14 @@ function SettingRow({
   onPress?: () => void;
   chevron?: boolean;
   iconColor?: string;
+  disabled?: boolean;
 }) {
   const { theme } = useTheme();
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={onPress ? 0.7 : 1}
+      activeOpacity={onPress && !disabled ? 0.7 : 1}
+      disabled={disabled}
       style={[styles.row, { borderBottomColor: theme.divider }]}
     >
       <View style={[styles.rowIcon, { backgroundColor: (iconColor ?? theme.accentPrimaryDim) }]}>
@@ -45,6 +47,7 @@ function SettingRow({
         <Switch
           value={value}
           onValueChange={onToggle}
+          disabled={disabled}
           trackColor={{ false: theme.border, true: theme.accentPrimary + '80' }}
           thumbColor={value ? theme.accentPrimary : theme.textTertiary}
           ios_backgroundColor={theme.border}

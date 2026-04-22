@@ -10,7 +10,7 @@ import { useTheme } from '@/src/contexts/ThemeContext';
 import { SkeletonLoader } from '@/src/components/ui/SkeletonLoader';
 import { SignalCard } from '@/src/components/signals';
 import { EmptyState } from '@/src/components/ui/EmptyState';
-import { useSignals } from '@/src/hooks';
+import { useMarket, useSignals } from '@/src/hooks';
 import type { SignalStatus, SignalDirection } from '@/src/types';
 
 type FilterDir    = SignalDirection | 'all';
@@ -46,6 +46,7 @@ const HISTORY_STATUS_FILTERS: StatusFilterItem[] = [
 export default function SignalsScreen() {
   const { theme } = useTheme();
   const insets    = useSafeAreaInsets();
+  useMarket();
 
   const {
     signals: allSignals,
@@ -127,6 +128,23 @@ export default function SignalsScreen() {
             </Text>
           </View>
         </Animated.View>
+
+        {tab === 'history' && historySignals.length > 0 ? (
+          <Pressable
+            onPress={handleClearHistory}
+            style={[
+              styles.clearBtn,
+              { backgroundColor: theme.card, borderColor: theme.error + '40' },
+            ]}
+            accessibilityLabel="Clear signal history"
+            hitSlop={8}
+          >
+            <Ionicons name="trash-outline" size={16} color={theme.error} />
+            <Text style={[styles.clearBtnText, { color: theme.error, fontFamily: 'Inter-SemiBold' }]}>
+              Clear
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {/* ── Tab Toggle ─────────────────────────────────────────────── */}
@@ -250,6 +268,8 @@ const styles = StyleSheet.create({
   statusIndicator: { width: 6, height: 6, borderRadius: 3 },
   scannerText:  { fontSize: 14 },
   refreshIcon:  { width: 40, height: 40, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  clearBtn:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
+  clearBtnText: { fontSize: 14 },
   
   tabWrapper:   { paddingHorizontal: 20, marginBottom: 16 },
   tabContainer: { flexDirection: 'row', padding: 4, borderRadius: 14, borderWidth: 1 },

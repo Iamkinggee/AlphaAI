@@ -10,6 +10,7 @@ import { StatusBadge } from '@/src/components/ui/StatusBadge';
 import { GradientCard } from '@/src/components/ui/GradientCard';
 import { Colors } from '@/src/constants/colors';
 import { useTheme } from '@/src/contexts/ThemeContext';
+import { useMarketStore } from '@/src/store/useMarketStore';
 import type { Signal } from '@/src/types';
 
 interface SignalCardProps {
@@ -22,6 +23,16 @@ export function SignalCard({ signal, index = 0, onDelete }: SignalCardProps) {
   const router  = useRouter();
   const { theme } = useTheme();
   const isLong  = signal.direction === 'LONG';
+  const liveTickDirect = useMarketStore((s) => s.priceTicks[signal.pair]);
+  const liveTickNoSlash = useMarketStore((s) => s.priceTicks[String(signal.pair).replace('/', '')]);
+  const liveTickWithSlash = useMarketStore((s) => {
+    const p = String(signal.pair);
+    if (p.includes('/')) return undefined;
+    if (p.endsWith('USDT')) return s.priceTicks[`${p.slice(0, -4)}/USDT`];
+    if (p.endsWith('BUSD')) return s.priceTicks[`${p.slice(0, -4)}/BUSD`];
+    return undefined;
+  });
+  const liveTick = liveTickDirect ?? liveTickWithSlash ?? liveTickNoSlash;
 
   const accentColor = isLong ? theme.bullish  : theme.bearish;
   const accentDim   = isLong ? theme.bullishDim : theme.bearishDim;
@@ -43,6 +54,8 @@ export function SignalCard({ signal, index = 0, onDelete }: SignalCardProps) {
         return hrs > 0 ? `Stale in ${hrs}h ${rem}m` : `Stale in ${mins}m`;
       })()
     : null;
+  const cmpFormatted = signal.currentPriceFormatted ?? liveTick?.priceFormatted ?? null;
+  const cmpText = cmpFormatted ?? '—';
 
   return (
     <Animated.View entering={FadeInDown.delay(index * 40).duration(350)}>
@@ -126,13 +139,11 @@ export function SignalCard({ signal, index = 0, onDelete }: SignalCardProps) {
                 {staleText}
               </Text>
             ) : null}
-            {signal.currentPriceFormatted ? (
-              <View style={[styles.telemetryChip, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                <Text style={[styles.telemetryChipText, { color: theme.textSecondary, fontFamily: 'Inter-SemiBold' }]}>
-                  CMP {signal.currentPriceFormatted}
-                </Text>
-              </View>
-            ) : null}
+            <View style={[styles.telemetryChip, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Text style={[styles.telemetryChipText, { color: theme.textSecondary, fontFamily: 'Inter-SemiBold' }]}>
+                CMP {cmpText}
+              </Text>
+            </View>
           </View>
 
           {/* ── Price levels ───────────────────────────────────────── */}

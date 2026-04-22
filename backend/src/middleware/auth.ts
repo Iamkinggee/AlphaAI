@@ -26,6 +26,14 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
+  // Local dev tokens used by the mobile app when backend auth is unavailable.
+  // These are NOT Supabase JWTs, so we accept them only outside production.
+  if (config.NODE_ENV !== 'production' && (token === 'dev_access_token' || token === 'dev_google_token' || token.startsWith('dev_'))) {
+    (req as AuthedRequest).user = { id: 'dev_user_001' };
+    next();
+    return;
+  }
+
   // Disallow dev tokens in production.
   if (config.NODE_ENV === 'production' && token.startsWith('dev_')) {
     res.status(401).json({ success: false, error: 'Invalid auth token' });

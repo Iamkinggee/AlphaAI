@@ -187,7 +187,7 @@ function buildHtml(pair: string, isDark: boolean, interval: string): string {
           if(obHigh - obLow >= atr * 0.25) break;
         }
       }
-      if(!obHigh){ obLow = entry - atr * 0.6; obHigh = entry; }
+      if(!obHigh){ obLow = entry - atr * 0.8; obHigh = entry; }
     } else {
       for(var i = cd.length - 3; i > cd.length - 20 && i > 0; i--){
         if(cd[i].close > cd[i].open){
@@ -196,7 +196,7 @@ function buildHtml(pair: string, isDark: boolean, interval: string): string {
           if(obHigh - obLow >= atr * 0.25) break;
         }
       }
-      if(!obLow){ obLow = entry; obHigh = entry + atr * 0.6; }
+      if(!obLow){ obLow = entry; obHigh = entry + atr * 0.8; }
     }
     return { low: obLow, high: obHigh };
   }
@@ -225,21 +225,26 @@ function buildHtml(pair: string, isDark: boolean, interval: string): string {
     var entry     = last.close;
     var isLong    = direction === 'LONG';
 
-    /* ATR-scaled levels */
-    var slDist  = atr14 * 1.8;   // SL: 1.8 × ATR
-    var tp1Dist = atr14 * 2.0;   // TP1: ~1:1.1 R:R
-    var tp2Dist = atr14 * 4.2;   // TP2: ~1:2.3 R:R
-    var tp3Dist = atr14 * 7.5;   // TP3: ~1:4.2 R:R
-
-    var sl, tp1, tp2, tp3;
-    if(isLong){
-      sl = entry - slDist; tp1 = entry + tp1Dist; tp2 = entry + tp2Dist; tp3 = entry + tp3Dist;
-    } else {
-      sl = entry + slDist; tp1 = entry - tp1Dist; tp2 = entry - tp2Dist; tp3 = entry - tp3Dist;
-    }
-
     var ob  = findOBZone(cd, direction, entry, atr14);
     var fvg = findFVG(cd, direction, atr14);
+    var zoneLow = ob.low;
+    var zoneHigh = ob.high;
+    var zoneMid = (zoneLow + zoneHigh) / 2;
+    var zoneWidth = Math.max(atr14 * 0.35, Math.abs(zoneHigh - zoneLow));
+    // Entry uses the structural zone midpoint for consistency with backend trade planning.
+    entry = zoneMid;
+
+    // Stop is placed beyond zone edge plus volatility buffer.
+    var slBuffer = Math.max(atr14 * 0.35, zoneWidth * 0.25);
+    var sl = isLong ? (zoneLow - slBuffer) : (zoneHigh + slBuffer);
+    var risk = Math.abs(entry - sl);
+    if(risk <= 0){ risk = Math.max(atr14 * 0.6, zoneWidth * 0.5); }
+
+    // Enforce quality-oriented RR ladder in fallback mode.
+    var rr1 = 2.0, rr2 = 3.2, rr3 = 4.8;
+    var tp1 = isLong ? (entry + risk * rr1) : (entry - risk * rr1);
+    var tp2 = isLong ? (entry + risk * rr2) : (entry - risk * rr2);
+    var tp3 = isLong ? (entry + risk * rr3) : (entry - risk * rr3);
 
     return { direction:direction, entry:entry, sl:sl, tp1:tp1, tp2:tp2, tp3:tp3, ob:ob, fvg:fvg, atr:atr14 };
   }
@@ -525,6 +530,7 @@ export default function AnalyseScreen() {
   const [timeframe,  setTimeframe]  = useState('4h');
   const [search,     setSearch]     = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [showTokenList, setShowTokenList] = useState(false);
   const [aiText,     setAiText]     = useState('');
   const [aiLoading,  setAiLoading]  = useState(false);
   const [setup,      setSetup]      = useState<SMCSetup | null>(null);
@@ -569,10 +575,25 @@ export default function AnalyseScreen() {
     setSupportedPairs(prev => (pair && !prev.includes(pair) ? [pair, ...prev] : prev));
   }, [pair]);
 
+  useEffect(() => {
+    const requestedPair = params.pair;
+    if (!requestedPair || requestedPair === pair) return;
+
+    setPair(requestedPair);
+    setSearch('');
+    setShowSearch(false);
+    setShowTokenList(false);
+    setAiText('');
+    setSetup(null);
+    setAutoLevels(null);
+    inject(`window.loadPair('${requestedPair.replace('/','').toUpperCase()}')`);
+  }, [params.pair, pair, inject]);
+
   const existingSignal = useMemo(
     () => signals.find(s => s.pair === pair && (s.status === 'active' || s.status === 'approaching')),
     [signals, pair]
   );
+  const levelSource = existingSignal ? 'engine' : autoLevels ? 'fallback' : null;
 
   const html = useMemo(() => buildHtml(pair, isDark, timeframe), [pair, isDark]);
 
@@ -600,7 +621,7 @@ export default function AnalyseScreen() {
           color: isLong ? '#00B4FF' : '#FF3366',
         }],
         levels: [
-          { label:'Entry', price: s.entryZone.low,         color: isLong ? '#00F0A0' : '#FF3366', solid: true  },
+          { label:'Entry', price: (s.entryZone.low + s.entryZone.high) / 2, color: isLong ? '#00F0A0' : '#FF3366', solid: true  },
           { label:'SL',    price: s.stopLoss,               color: '#FF3366', solid: true  },
           { label:'TP1',   price: s.takeProfit1.price,      color: '#FFB800', solid: false },
           { label:'TP2',   price: s.takeProfit2.price,      color: '#FFB80099', solid: false },
@@ -665,6 +686,7 @@ export default function AnalyseScreen() {
     setPair(p);
     setSearch('');
     setShowSearch(false);
+    setShowTokenList(false);
     setAiText('');
     setSetup(null);
     setAutoLevels(null); // will refresh from new data
@@ -677,8 +699,19 @@ export default function AnalyseScreen() {
     setAiLoading(true);
     setAiText('');
 
-    // Use live auto-levels if available; otherwise estimate from current pair
-    const lvl = autoLevels ?? {
+    // Prefer backend-canonical live signal levels when present.
+    // Fallback to WebView auto-levels only when no live signal exists.
+    const backendLevels = existingSignal ? {
+      direction: existingSignal.direction as 'LONG' | 'SHORT',
+      entry: (existingSignal.entryZone.low + existingSignal.entryZone.high) / 2,
+      sl: existingSignal.stopLoss,
+      tp1: existingSignal.takeProfit1.price,
+      tp2: existingSignal.takeProfit2.price,
+      tp3: existingSignal.takeProfit3.price,
+      atr: 0,
+    } : null;
+
+    const lvl = backendLevels ?? autoLevels ?? {
       direction: 'LONG' as const,
       entry: 0, sl: 0, tp1: 0, tp2: 0, tp3: 0, atr: 0,
     };
@@ -723,7 +756,7 @@ export default function AnalyseScreen() {
     } finally {
       setAiLoading(false);
     }
-  }, [pair, timeframe, autoLevels, showLevels, inject, aiLoading]);
+  }, [pair, timeframe, autoLevels, existingSignal, showLevels, inject, aiLoading]);
 
   const filteredPairs = useMemo(() =>
     supportedPairs.filter(p => p.toLowerCase().includes(search.toLowerCase())),
@@ -737,7 +770,12 @@ export default function AnalyseScreen() {
       <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: theme.border }]}>
         <Text style={[styles.title, { color: theme.textPrimary, fontFamily: 'Inter-Bold' }]}>Analyse</Text>
         <Pressable
-          onPress={() => setShowSearch(!showSearch)}
+          onPress={() => {
+            const next = !showSearch;
+            setShowSearch(next);
+            // Keep token list collapsed by default so it doesn't push down content.
+            if (!next) setShowTokenList(false);
+          }}
           style={[styles.pairBadge, { backgroundColor: theme.accentPrimaryDim, borderColor: theme.accentPrimary + '50' }]}
         >
           <Ionicons name="search" size={13} color={theme.accentPrimary} />
@@ -761,7 +799,10 @@ export default function AnalyseScreen() {
               placeholder="Search any token (BTC, ETH, SOL…)"
               placeholderTextColor={theme.textTertiary}
               value={search}
-              onChangeText={setSearch}
+              onChangeText={(value) => {
+                setSearch(value);
+                if (value.length > 0) setShowTokenList(true);
+              }}
               autoCapitalize="characters"
               autoFocus
             />
@@ -771,21 +812,32 @@ export default function AnalyseScreen() {
               </Pressable>
             )}
           </View>
-          <ScrollView style={{ maxHeight: 160 }} showsVerticalScrollIndicator={false}>
-            <View style={styles.pairGrid}>
-              {filteredPairs.map(p => (
-                <Pressable key={p} onPress={() => selectPair(p)}
-                  style={[styles.pairChip, {
-                    backgroundColor: pair === p ? theme.accentPrimaryDim : theme.card,
-                    borderColor: pair === p ? theme.accentPrimary + '60' : theme.border,
-                  }]}>
-                  <Text style={[styles.pairChipText, { color: pair === p ? theme.accentPrimary : theme.textSecondary, fontFamily: 'Inter-SemiBold' }]}>
-                    {p.replace('/USDT','')}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </ScrollView>
+          <Pressable
+            onPress={() => setShowTokenList((prev) => !prev)}
+            style={[styles.tokenListToggle, { borderColor: theme.border, backgroundColor: theme.surface }]}
+          >
+            <Text style={[styles.tokenListToggleText, { color: theme.textSecondary, fontFamily: 'Inter-Medium' }]}>
+              Tokens ({filteredPairs.length})
+            </Text>
+            <Ionicons name={showTokenList ? 'chevron-up' : 'chevron-down'} size={14} color={theme.textTertiary} />
+          </Pressable>
+          {showTokenList && (
+            <ScrollView style={{ maxHeight: 120 }} nestedScrollEnabled showsVerticalScrollIndicator={false}>
+              <View style={styles.pairGrid}>
+                {filteredPairs.map(p => (
+                  <Pressable key={p} onPress={() => selectPair(p)}
+                    style={[styles.pairChip, {
+                      backgroundColor: pair === p ? theme.accentPrimaryDim : theme.card,
+                      borderColor: pair === p ? theme.accentPrimary + '60' : theme.border,
+                    }]}>
+                    <Text style={[styles.pairChipText, { color: pair === p ? theme.accentPrimary : theme.textSecondary, fontFamily: 'Inter-SemiBold' }]}>
+                      {p.replace('/USDT','')}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </ScrollView>
+          )}
         </Animated.View>
       )}
 
@@ -861,6 +913,29 @@ export default function AnalyseScreen() {
         return (
           <Animated.View entering={FadeInDown.duration(300)}
             style={[styles.levelBar, { backgroundColor: theme.cardElevated, borderTopColor: theme.border }]}>
+            <View style={styles.levelSourceWrap}>
+              <View
+                style={[
+                  styles.levelSourcePill,
+                  {
+                    backgroundColor: levelSource === 'engine' ? theme.bullishDim : theme.approachingDim,
+                    borderColor: levelSource === 'engine' ? theme.bullish + '50' : theme.approaching + '50',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.levelSourceText,
+                    {
+                      color: levelSource === 'engine' ? theme.bullish : theme.approaching,
+                      fontFamily: 'Inter-SemiBold',
+                    },
+                  ]}
+                >
+                  Source: {levelSource === 'engine' ? 'Engine' : 'Fallback'}
+                </Text>
+              </View>
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.levelScroll}>
               {items.map((item, i, arr) => (
                 <View key={item.label} style={[styles.levelItem, i < arr.length - 1 && { borderRightWidth: 1, borderRightColor: theme.border }]}>
@@ -950,6 +1025,8 @@ const styles = StyleSheet.create({
   searchDrawer: { borderBottomWidth: 1, padding: 12, gap: 10 },
   searchBar:    { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 10, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 9 },
   searchInput:  { flex: 1, fontSize: 16, padding: 0 },
+  tokenListToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  tokenListToggleText: { fontSize: 13 },
   pairGrid:     { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingTop: 4 },
   pairChip:     { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 10, borderWidth: 1 },
   pairChipText: { fontSize: 15 },
@@ -964,6 +1041,9 @@ const styles = StyleSheet.create({
   errState:     { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   errText:      { fontSize: 16 },
   levelBar:     { borderTopWidth: StyleSheet.hairlineWidth },
+  levelSourceWrap: { paddingHorizontal: 10, paddingTop: 8 },
+  levelSourcePill: { alignSelf: 'flex-start', borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  levelSourceText: { fontSize: 12 },
   levelScroll:  { paddingHorizontal: 8, paddingVertical: 8, gap: 0 },
   levelItem:    { alignItems: 'center', paddingHorizontal: 14, gap: 2 },
   levelLabel:   { fontSize: 12 },

@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet, LogBox } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '@/src/store/useAuthStore';
 import { useFonts } from 'expo-font';
 import {
@@ -30,22 +31,44 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const router   = useRouter();
   const segments = useSegments();
   const status   = useAuthStore((s) => s.status);
-  const initialized = useRef(false);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+  const [hasOnboarded, setHasOnboarded] = useState(false);
 
   useEffect(() => {
-    if (status === 'initialising') return;
+    let alive = true;
+    (async () => {
+      try {
+        const flag = await AsyncStorage.getItem('@alphaai/onboarded');
+        if (!alive) return;
+        setHasOnboarded(flag === 'true');
+      } finally {
+        if (alive) setOnboardingReady(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (status === 'initialising' || !onboardingReady) return;
 
     const inAuth    = segments[0] === '(auth)';
     const inOnboard = segments[0] === 'onboarding';
 
-    if (status === 'unauthenticated' && !inAuth) {
-      router.replace('/(auth)/sign-in');
+    if (status === 'unauthenticated') {
+      if (!hasOnboarded && !inOnboard && !inAuth) {
+        router.replace('/onboarding');
+      } else if (hasOnboarded && !inAuth) {
+        router.replace('/(auth)/sign-in');
+      }
     } else if (status === 'authenticated' && (inAuth || inOnboard)) {
       router.replace('/(tabs)');
     }
 
-    initialized.current = true;
-  }, [status, segments]);
+  }, [status, segments, onboardingReady, hasOnboarded]);
+
+  if (status === 'initialising' || !onboardingReady) {
+    return <SplashView />;
+  }
 
   return <>{children}</>;
 }

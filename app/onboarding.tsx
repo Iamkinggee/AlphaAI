@@ -18,7 +18,7 @@ const SLIDES = [
     icon: 'flash' as const,
     iconColor: '#FFB800',
     title: 'Detect Before\nPrice Moves',
-    subtitle: 'Our 3-stage SMC engine scans 20+ pairs around the clock — flagging institution-level setups hours before they trigger.',
+    subtitle: 'Our 3-stage SMC engine scans 80 pairs around the clock — flagging institution-level setups hours before they trigger.',
   },
   {
     key: '2',

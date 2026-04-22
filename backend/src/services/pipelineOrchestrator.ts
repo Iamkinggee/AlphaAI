@@ -32,6 +32,16 @@ const livePrices: Record<string, number> = {};
 const unsubscribers: Array<() => void> = [];
 let approachInterval: ReturnType<typeof setInterval> | null = null;
 
+// Scanner lookback tuning:
+// - 1H gets deeper context for cleaner refinement/micro-structure.
+// - 4H gets moderately deeper context for stronger zone validity.
+// - 1D stays at 200 (already broad macro context and cost-efficient).
+const CANDLE_LOOKBACK = {
+  '1h': 350,
+  '4h': 300,
+  '1d': 200,
+} as const;
+
 /**
  * Boot the detection pipeline.
  */
@@ -164,9 +174,9 @@ async function runInitialStructureScan(): Promise<void> {
     await Promise.all(batch.map(async ({ pair, symbol }) => {
       try {
         const [c1H, c4H, c1D] = await Promise.all([
-          fetchCandles(symbol, '1h', 200, 'FUTURES'),
-          fetchCandles(symbol, '4h', 200, 'FUTURES'),
-          fetchCandles(symbol, '1d', 200, 'FUTURES')
+          fetchCandles(symbol, '1h', CANDLE_LOOKBACK['1h'], 'FUTURES'),
+          fetchCandles(symbol, '4h', CANDLE_LOOKBACK['4h'], 'FUTURES'),
+          fetchCandles(symbol, '1d', CANDLE_LOOKBACK['1d'], 'FUTURES')
         ]);
         
         await Promise.all([
@@ -385,7 +395,7 @@ async function persistApproachingSignals(signals: any[]): Promise<void> {
     }
 
     if (rowId) {
-      const { broadcastApproaching } = await import('./wsServerManager');
+      const { broadcastApproaching } = await import('./wsServerManager.js');
       broadcastApproaching({
         signalId:    rowId,
         pair:        signal.pair,
@@ -446,7 +456,7 @@ async function activateSignal(id: string, trigger: any): Promise<void> {
     .single();
 
   if (row) {
-    const { broadcastActivated } = await import('./wsServerManager');
+    const { broadcastActivated } = await import('./wsServerManager.js');
     broadcastActivated({
       signalId: row.id,
       pair: row.pair,

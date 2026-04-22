@@ -19,65 +19,91 @@ export function useMarket() {
   } = useMarketStore();
 
   const unsubRef = useRef<(() => void) | null>(null);
-  const reconnectIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pulseRefreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Shared singleton guards to avoid duplicate WS/poll loops when multiple
+  // screens use this hook (dashboard, watchlist, etc.).
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _shared = useRef(0);
 
   // Initial REST fetch — loads pulse + full pair list (top 80)
   useEffect(() => {
-    fetchPulse();
+    sharedMountCount += 1;
+    if (!sharedStarted) {
+      sharedStarted = true;
+    }
+    // React StrictMode remounts effects in dev; keep bootstrap fetch one-time per app session.
+    if (!sharedBootstrapped) {
+      sharedBootstrapped = true;
+      fetchPulse();
+    }
   }, []);
 
   // Subscribe to real-time WS price ticks
   // Use '*' wildcard so we receive ticks for ALL 80 pairs without listing them
   useEffect(() => {
-    // Defensive connect call to recover sessions where root connect was missed.
-    wsManager.connect();
+    // Start shared realtime loop only once app-wide.
+    if (!sharedRealtimeStarted) {
+      sharedRealtimeStarted = true;
 
-    // Wildcard subscription — backend sends price_tick for every monitored pair
-    wsManager.subscribe(['*']);
+      // Defensive connect call to recover sessions where root connect was missed.
+      wsManager.connect();
 
-    const unsubHandler = wsManager.on<{ pair: string; price: number; change24h: number }>(
-      'price_tick',
-      ({ pair, price, change24h }) => {
-        // Update the tick for any pair — whether it was pre-loaded or not
-        updatePriceTick({
-          pair,
-          price,
-          priceFormatted:     formatPrice(price),
-          change24h:          change24h ?? 0,
-          change24hFormatted: `${(change24h ?? 0) >= 0 ? '+' : ''}${(change24h ?? 0).toFixed(2)}%`,
-          lastUpdated:        Date.now(),
-        });
-      }
-    );
+      // Wildcard subscription — backend sends price_tick for every monitored pair
+      wsManager.subscribe(['*']);
 
-    unsubRef.current = () => {
-      unsubHandler();
-      wsManager.unsubscribe(['*']);
-    };
+      sharedUnsubHandler = wsManager.on<{ pair: string; price: number; change24h: number }>(
+        'price_tick',
+        ({ pair, price, change24h }) => {
+          const state = useMarketStore.getState();
+          const existing = state.priceTicks[pair];
+          state.updatePriceTick({
+            pair,
+            price,
+            priceFormatted: formatPrice(price),
+            change24h: change24h ?? 0,
+            change24hFormatted: `${(change24h ?? 0) >= 0 ? '+' : ''}${(change24h ?? 0).toFixed(2)}%`,
+            high24h: existing?.high24h ?? 0,
+            low24h: existing?.low24h ?? 0,
+            volume24h: existing?.volume24h ?? 0,
+            lastUpdated: Date.now(),
+          });
+        }
+      );
 
-    // Auto-heal WS connection if mobile network drops intermittently.
-    reconnectIntervalRef.current = setInterval(() => {
-      if (!wsManager.connected) {
-        wsManager.connect();
-        wsManager.subscribe(['*']);
-      }
-    }, 10_000);
+      // Auto-heal WS connection if mobile network drops intermittently.
+      sharedReconnectInterval = setInterval(() => {
+        if (!wsManager.connected) {
+          wsManager.connect();
+          wsManager.subscribe(['*']);
+        }
+      }, 10_000);
 
-    // Dashboard pulse fallback refresh (WS does not stream fear/greed and BTC dom).
-    pulseRefreshIntervalRef.current = setInterval(() => {
-      fetchPulse();
-    }, 30_000);
+      // Dashboard pulse fallback refresh (WS does not stream fear/greed and BTC dom).
+      sharedPulseRefreshInterval = setInterval(() => {
+        useMarketStore.getState().fetchPulse();
+      }, 30_000);
+    }
+
+    unsubRef.current = () => {};
 
     return () => {
-      unsubRef.current?.();
-      if (reconnectIntervalRef.current) {
-        clearInterval(reconnectIntervalRef.current);
-        reconnectIntervalRef.current = null;
-      }
-      if (pulseRefreshIntervalRef.current) {
-        clearInterval(pulseRefreshIntervalRef.current);
-        pulseRefreshIntervalRef.current = null;
+      sharedMountCount = Math.max(0, sharedMountCount - 1);
+      if (sharedMountCount === 0) {
+        // Stop shared loops only when last consumer unmounts.
+        sharedUnsubHandler?.();
+        sharedUnsubHandler = null;
+        wsManager.unsubscribe(['*']);
+
+        if (sharedReconnectInterval) {
+          clearInterval(sharedReconnectInterval);
+          sharedReconnectInterval = null;
+        }
+        if (sharedPulseRefreshInterval) {
+          clearInterval(sharedPulseRefreshInterval);
+          sharedPulseRefreshInterval = null;
+        }
+        sharedRealtimeStarted = false;
+        sharedStarted = false;
       }
     };
   }, [fetchPulse, updatePriceTick]);
@@ -92,6 +118,14 @@ export function useMarket() {
     getPrice,
   };
 }
+
+let sharedMountCount = 0;
+let sharedStarted = false;
+let sharedBootstrapped = false;
+let sharedRealtimeStarted = false;
+let sharedUnsubHandler: (() => void) | null = null;
+let sharedReconnectInterval: ReturnType<typeof setInterval> | null = null;
+let sharedPulseRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
 function formatPrice(price: number): string {
   if (price >= 10000) return `$${price.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;

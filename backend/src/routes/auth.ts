@@ -62,6 +62,14 @@ router.post('/sign-up', async (req: Request, res: Response) => {
  */
 router.post('/sign-in', async (req: Request, res: Response) => {
   const { email, password } = req.body;
+  console.log('[DBG-AuthRoute] /sign-in request', {
+    hasEmail: !!email,
+    emailDomain: typeof email === 'string' ? email.split('@')[1] ?? null : null,
+    hasPassword: !!password,
+  });
+  // #region agent log
+  fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'backend/src/routes/auth.ts:/sign-in',message:'backend sign-in request',data:{hasEmail:!!email,emailDomain:typeof email === 'string' ? email.split('@')[1] ?? null : null,hasPassword:!!password},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion agent log
 
   if (!email || !password) {
     res.status(400).json({ success: false, error: 'Email and password are required' });
@@ -74,6 +82,13 @@ router.post('/sign-in', async (req: Request, res: Response) => {
     const { data, error } = await db.auth.signInWithPassword({ email, password });
 
     if (error || !data?.session) {
+      console.log('[DBG-AuthRoute] /sign-in rejected', {
+        errorMessage: error?.message ?? null,
+        hasSession: !!data?.session,
+      });
+      // #region agent log
+      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'backend/src/routes/auth.ts:/sign-in',message:'backend sign-in rejected',data:{errorMessage:error?.message ?? null,hasSession:!!data?.session},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
       res.status(401).json({ success: false, error: 'Invalid credentials' });
       return;
     }
@@ -91,8 +106,19 @@ router.post('/sign-in', async (req: Request, res: Response) => {
         },
       },
     });
+    // #region agent log
+    fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'backend/src/routes/auth.ts:/sign-in',message:'backend sign-in success',data:{userId:data.user?.id ?? null,hasRefresh:!!data.session.refresh_token},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
+    console.log('[DBG-AuthRoute] /sign-in success', {
+      userId: data.user?.id ?? null,
+      hasRefresh: !!data.session.refresh_token,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    console.log('[DBG-AuthRoute] /sign-in exception', { errorMessage: message });
+    // #region agent log
+    fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'backend/src/routes/auth.ts:/sign-in',message:'backend sign-in exception',data:{errorMessage:message},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
     res.status(500).json({ success: false, error: message });
   }
 });
@@ -171,6 +197,13 @@ router.get('/google/url', (req: Request, res: Response) => {
     `${supabaseUrl}/auth/v1/authorize` +
     `?provider=google` +
     `&redirect_to=${encodeURIComponent(redirectUri)}`;
+  // #region agent log
+  fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H4',location:'backend/src/routes/auth.ts:/google/url',message:'google oauth url generated',data:{redirectUri,hasSupabaseUrl:!!supabaseUrl},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion agent log
+  console.log('[DBG-AuthRoute] /google/url generated', {
+    redirectUri,
+    hasSupabaseUrl: !!supabaseUrl,
+  });
 
   res.json({ success: true, data: { url } });
 });

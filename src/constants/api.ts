@@ -38,7 +38,8 @@ function getDevHost(): string {
 
 const DEV_HOST     = __DEV__ ? getDevHost() : '';
 const DEV_API_URL  = `http://${DEV_HOST}:3000/api`;
-const PROD_API_URL = 'https://api.alphaai.app/api';
+const PROD_API_URL = process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'https://alphaai-app.duckdns.org/api';
+const PROD_WS_URL  = process.env.EXPO_PUBLIC_WS_URL?.trim() || 'wss://alphaai-app.duckdns.org';
 
 export const API = {
   BASE_URL: __DEV__ ? DEV_API_URL : PROD_API_URL,
@@ -121,7 +122,7 @@ export const API = {
 } as const;
 
 export const WS = {
-  URL: __DEV__ ? `ws://${DEV_HOST}:3000` : 'wss://api.alphaai.app',
+  URL: __DEV__ ? `ws://${DEV_HOST}:3000` : PROD_WS_URL,
   RECONNECT_INTERVAL: 3000,
   MAX_RECONNECT_ATTEMPTS: 10,
   PING_INTERVAL: 15000,

@@ -23,6 +23,7 @@ import * as Linking from 'expo-linking';
 import type { User, AuthStatus, UserSettings, SignInPayload, SignUpPayload } from '@/src/types';
 import { apiClient } from '@/src/services/apiClient';
 import { API } from '@/src/constants/api';
+import { ApiError } from '@/src/services/apiClient';
 
 // Ensure the browser session closes cleanly on Android
 WebBrowser.maybeCompleteAuthSession();
@@ -76,6 +77,16 @@ function buildUserFromEmail(email: string, displayName?: string): User {
     tier: 'pro',
     createdAt: new Date().toISOString(),
   };
+}
+
+function readableAuthError(err: unknown): string {
+  if (err instanceof ApiError) {
+    const body = err.body as { error?: string } | undefined;
+    const detail = body?.error ?? err.message;
+    return `${detail} (HTTP ${err.statusCode})`;
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
@@ -134,6 +145,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   signIn: async ({ email, password }: SignInPayload): Promise<boolean> => {
     set({ isLoading: true, error: null });
+    // #region agent log
+    fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn start',data:{emailDomain:email.split('@')[1] ?? null,isDev:__DEV__},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
     try {
       // Race against a 10-second timeout — Supabase auth can be slow but 8s+ is unacceptable
       const signInPromise = apiClient.post<{
@@ -148,6 +162,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       const res = await Promise.race([signInPromise, timeoutPromise]);
 
       if (!res.success || !res.data) {
+        // #region agent log
+        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn response not successful',data:{success:res.success,hasData:!!res.data},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
         set({ isLoading: false, error: 'Invalid credentials.' });
         return false;
       }
@@ -157,8 +174,14 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       await SecureStore.setItemAsync('alphaai_user_email', email);
       await SecureStore.setItemAsync('alphaai_user_name', res.data.user.displayName ?? '');
       set({ user: res.data.user, status: 'authenticated', isLoading: false });
+      // #region agent log
+      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn success',data:{hasAccessToken:!!res.data.accessToken,userId:res.data.user?.id ?? null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
       return true;
-    } catch {
+    } catch (err) {
+      // #region agent log
+      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn caught error',data:{errorMessage:err instanceof Error ? err.message : String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
       // In dev mode, allow sign-in when backend is unreachable
       if (__DEV__ && email && password) {
         console.log('[AuthStore] Dev mode — backend unavailable, creating local session');
@@ -169,7 +192,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         set({ user, status: 'authenticated', isLoading: false });
         return true;
       }
-      set({ isLoading: false, error: 'Sign in failed. Please check your connection.' });
+      set({ isLoading: false, error: `Sign in failed: ${readableAuthError(err)}` });
       return false;
     }
   },
@@ -232,6 +255,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
    */
   signInWithGoogle: async (): Promise<boolean> => {
     set({ isLoading: true, error: null });
+    // #region agent log
+    fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H1',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google sign-in start',data:{isDev:__DEV__},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log
 
     try {
       // Build the redirect URI using the app's registered scheme
@@ -251,6 +277,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
 
       if (!oauthUrl) {
+        // #region agent log
+        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H4',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google oauth url unavailable',data:{oauthUrl:null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
         // Backend unreachable or Google not configured — dev fallback
         if (__DEV__) {
           console.log('[AuthStore] Dev mode — Google OAuth unavailable, using dev session');
@@ -276,6 +305,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
       // ── Step 2: Open OAuth URL in browser ───────────────────────────
       const result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
+      // #region agent log
+      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H4',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google auth session result',data:{type:result.type,hasUrl:!!(result as any).url},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
 
       if (result.type === 'cancel' || result.type === 'dismiss') {
         set({ isLoading: false, error: null }); // silent — user cancelled
@@ -303,6 +335,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         const message = errorDesc
           ? decodeURIComponent(errorDesc.replace(/\+/g, ' '))
           : errorCode ?? 'No access token received.';
+        // #region agent log
+        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H1',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google callback missing access token',data:{errorCode:params.get('error') ?? null,errorDescription:params.get('error_description') ?? null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
         set({ isLoading: false, error: `Google Sign-In failed: ${message}` });
         return false;
       }
@@ -319,6 +354,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         await SecureStore.setItemAsync('alphaai_user_email', profileRes.data.email ?? '');
         await SecureStore.setItemAsync('alphaai_user_name', profileRes.data.displayName ?? '');
         set({ user: profileRes.data, status: 'authenticated', isLoading: false });
+        // #region agent log
+        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H3',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google sign-in success',data:{userId:profileRes.data.id ?? null,emailDomain:profileRes.data.email?.split('@')[1] ?? null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log
         return true;
       }
 
@@ -327,7 +365,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
     } catch (err) {
       console.error('[AuthStore] Google Sign-In error:', err);
-      set({ isLoading: false, error: 'Google Sign-In failed. Please try again.' });
+      // #region agent log
+      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H1',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google sign-in caught error',data:{errorMessage:err instanceof Error ? err.message : String(err)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log
+      set({ isLoading: false, error: `Google Sign-In failed: ${readableAuthError(err)}` });
       return false;
     }
   },

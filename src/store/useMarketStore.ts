@@ -8,6 +8,8 @@ import type { MarketPulse, PriceTick } from '@/src/types';
 import { apiClient } from '@/src/services/apiClient';
 import { API } from '@/src/constants/api';
 
+let marketFetchInFlight: Promise<void> | null = null;
+
 interface MarketStore {
   // State
   pulse:       MarketPulse | null;
@@ -41,7 +43,12 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
    * Stores ALL pairs as price ticks, keyed by pair string (e.g. "BTC/USDT").
    */
   fetchPulse: async () => {
+    // Prevent overlapping pulse requests (runtime logs confirmed overlap).
+    if (marketFetchInFlight) {
+      return;
+    }
     set({ isLoading: true, error: null });
+    marketFetchInFlight = (async () => {
     try {
       const [pulseRes, pairsRes] = await Promise.all([
         apiClient.get<{ success: boolean; data: MarketPulse }>(API.MARKET.PULSE),
@@ -66,6 +73,13 @@ export const useMarketStore = create<MarketStore>((set, get) => ({
       const message = err instanceof Error ? err.message : 'Failed to fetch market data';
       console.error('[MarketStore] fetchPulse error:', message);
       set({ isLoading: false, error: message, lastUpdated: new Date() });
+    }
+    })();
+
+    try {
+      await marketFetchInFlight;
+    } finally {
+      marketFetchInFlight = null;
     }
   },
 

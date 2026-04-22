@@ -14,7 +14,11 @@
         "buildType": "apk"
       },
       "env": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "EXPO_PUBLIC_API_BASE_URL": "http://192.168.196.47:3000/api",
+        "EXPO_PUBLIC_WS_URL": "ws://192.168.196.47:3000",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "1",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1"
       }
     },
     "preview": {
@@ -22,14 +26,28 @@
       "ios": {
         "simulator": false
       },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
-        "APP_ENV": "preview"
+        "APP_ENV": "preview",
+        "EXPO_PUBLIC_API_BASE_URL": "https://alphaai-app.duckdns.org/api",
+        "EXPO_PUBLIC_WS_URL": "wss://alphaai-app.duckdns.org",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "1",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1"
       }
     },
     "production": {
       "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_API_BASE_URL": "https://alphaai-app.duckdns.org/api",
+        "EXPO_PUBLIC_WS_URL": "wss://alphaai-app.duckdns.org",
+        "EAS_BUILD_NO_EXPO_GO_WARNING": "1",
+        "EAS_SKIP_AUTO_FINGERPRINT": "1"
       }
     }
   },

@@ -3,7 +3,10 @@
  */
 import { ExpoConfig, ConfigContext } from 'expo/config';
 
-export default ({ config }: ConfigContext): ExpoConfig => ({
+export default ({ config }: ConfigContext): ExpoConfig => {
+  const easProjectId = process.env.EXPO_PUBLIC_PROJECT_ID ?? 'f76c7dcc-7c66-4f0c-8210-18ddf056770d';
+
+  return {
   ...config,
   name: 'AlphaAI',
   slug: 'AlphaAI',
@@ -58,7 +61,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-notifications',
       {
-        icon: './assets/images/notification-icon.png',
+        icon: './assets/images/android-icon-monochrome.png',
         color: '#00D4FF',
       },
     ],
@@ -69,9 +72,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     reactCompiler: true,
   },
 
-  extra: {
-    eas: {
-      projectId: process.env.EXPO_PUBLIC_PROJECT_ID || '00000000-0000-0000-0000-000000000000',
-    },
-  },
-});
+  ...(easProjectId
+    ? {
+        extra: {
+          eas: {
+            projectId: easProjectId,
+          },
+        },
+      }
+    : {}),
+  };
+};

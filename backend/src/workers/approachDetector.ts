@@ -3,13 +3,13 @@
  * Professional SMC Early-Detection Logic.
  *
  * Responsibilities:
- * - Detects price proximity (0.5% – 2.5%) to structural zones (early warning window).
+ * - Detects price proximity (0.5% – 1.5%) to structural zones (early warning window).
  * - Computes confluence score using spec weights.
  * - Enforces ALL hard rejection rules from spec before emitting any signal.
  * - Generates descriptive setup labels (e.g. "4H OB + Nested FVG — Approaching").
  *
  * Hard Rejection Rules (signal silently discarded if any apply):
- *  1. RR < 1:2 on TP1
+ *  1. RR below adaptive floor (quality + regime aware, never below 1:1.8)
  *  2. Pair already has an open approaching/active signal
  *  3. Price is >2% extended PAST the zone (entry too late)
  *  4. Zone score < 65/100
@@ -51,11 +51,13 @@ export interface ApproachingSignal {
 
 // ── Configuration ──────────────────────────────────────────────────────
 const MIN_SCORE           = 65;      // Spec minimum for approaching alert quality
-const MIN_ACTIVATION_RR   = 2.0;     // TP1 must be ≥ 1:2 RR (spec hard rule)
+const BASE_MIN_ACTIVATION_RR = 2.0;  // Baseline TP1 floor
+const MIN_RR_ABSOLUTE_FLOOR = 1.8;   // Never allow below this floor
 const APPROACH_PCT_MIN    = 0.005;   // 0.5% — already touching zone edge
 const APPROACH_PCT_MAX    = 0.015;   // 1.5% — spec early warning ceiling
 const EXTENSION_LIMIT_PCT = 0.02;    // >2% past zone = entry too late (spec rule)
 const STRUCTURAL_MAX_AGE  = 4 * 60 * 60 * 1000; // Structural data freshness cap (4H)
+const MAX_ZONE_AGE_MS      = 72 * 60 * 60 * 1000; // Reject very stale OB/FVG zones (>72h)
 
 // Pro mode hard filters (env-tunable).
 const PRO_MIN_CONFIDENCE = toNumberEnv(process.env.PRO_MIN_CONFIDENCE, 78);
@@ -91,6 +93,7 @@ export async function runApproachDetector(
 
     // ── 1. Load structural data (4H primary, 1H precision, 1D bias) ──
     const h4Data = await structuralMap.get(pair, '4H') as unknown as StructuralData;
+    const h1Data = await structuralMap.get(pair, '1H') as unknown as StructuralData | null;
     const d1Data = await structuralMap.get(pair, '1D') as unknown as StructuralData | null;
     if (!h4Data) continue;
 
@@ -172,7 +175,17 @@ export async function runApproachDetector(
       }
 
       const regime = classifyMarketRegime(h4Data, d1Data, distance);
-      const adjustedScore = Math.max(0, Math.min(100, scoreResult.score + regime.scoreBias));
+      const proModeEnabled = getProModeEnabled();
+      const h1Refinement = proModeEnabled
+        ? getH1Refinement(h1Data, direction)
+        : { scoreBias: 0, priorityBias: 0 };
+      const zoneFreshness = proModeEnabled
+        ? getZoneFreshnessScore(zone, h4Data)
+        : { scoreBias: 0, priorityBias: 0 };
+      const adjustedScore = Math.max(
+        0,
+        Math.min(100, scoreResult.score + regime.scoreBias + h1Refinement.scoreBias + zoneFreshness.scoreBias)
+      );
       if (adjustedScore < MIN_SCORE) continue;
 
       // ── 7. Trade Planning ────────────────────────────────────────────
@@ -191,8 +204,30 @@ export async function runApproachDetector(
       const rrTp2 = Math.abs(plan.takeProfit2.price - entryMid) / risk;
       const rrTp3 = Math.abs(plan.takeProfit3.price - entryMid) / risk;
 
-      if (rrTp1 < MIN_ACTIVATION_RR) {
-        console.log(`  [Skip] ${pair} R:R too low: 1:${rrTp1.toFixed(1)} (Target 1:2.0)`);
+      const confidenceSeed = Math.max(
+        1,
+        Math.min(
+          100,
+          Math.round(
+            adjustedScore * 0.75 +
+            (rrTp1 >= 3 ? 10 : rrTp1 >= 2.5 ? 6 : 3) +
+            (distance <= 0.008 ? 6 : distance <= 0.012 ? 3 : 1) +
+            (choch ? 5 : 0)
+          )
+        )
+      );
+      const qualityBandCandidate: ApproachingSignal['qualityBand'] =
+        confidenceSeed >= 82 ? 'A' : confidenceSeed >= 72 ? 'B' : 'C';
+      const requiredMinRr = proModeEnabled
+        ? getAdaptiveMinRr({
+            regime: regime.tag,
+            qualityBand: qualityBandCandidate,
+            distance,
+          })
+        : BASE_MIN_ACTIVATION_RR;
+
+      if (rrTp1 < requiredMinRr) {
+        console.log(`  [Skip] ${pair} R:R too low: 1:${rrTp1.toFixed(1)} (Target 1:${requiredMinRr.toFixed(1)})`);
         continue; // Hard rejection — R:R below 1:2
       }
 
@@ -216,7 +251,7 @@ export async function runApproachDetector(
       const staleAfter = new Date(Date.now() + staleAfterHours * 60 * 60 * 1000).toISOString();
 
       // Pro mode: tighten quality gate for better win consistency.
-      if (getProModeEnabled()) {
+      if (proModeEnabled) {
         if (confidenceScore < PRO_MIN_CONFIDENCE) continue;
         if (rrTp1 < PRO_MIN_RR) continue;
         if (distance > PRO_MAX_DISTANCE_PCT) continue;
@@ -250,7 +285,11 @@ export async function runApproachDetector(
         staleAfter,
         detectedAt:  Date.now(),
         _distance: distance,
-        _zonePriority: zone.type === 'OB' ? 3 : zone.type === 'SD' ? 2 : zone.type === 'FVG' ? 1 : 0,
+        _zonePriority: (
+          (zone.type === 'OB' ? 3 : zone.type === 'SD' ? 2 : zone.type === 'FVG' ? 1 : 0) +
+          zoneFreshness.priorityBias +
+          h1Refinement.priorityBias
+        ),
       });
     }
     if (candidates.length > 0) {
@@ -342,4 +381,86 @@ function classifyMarketRegime(
 function toNumberEnv(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getH1Refinement(
+  h1Data: StructuralData | null,
+  direction: 'LONG' | 'SHORT'
+): { scoreBias: number; priorityBias: number } {
+  if (!h1Data) return { scoreBias: -1, priorityBias: 0 };
+
+  const trendAligned =
+    (direction === 'LONG' && h1Data.trend === 'bullish') ||
+    (direction === 'SHORT' && h1Data.trend === 'bearish');
+  const reversalSupport = h1Data.choch;
+  const recentBosAligned = (h1Data.bosEvents ?? [])
+    .slice(-3)
+    .some((e) =>
+      e.direction === (direction === 'LONG' ? 'BULLISH' : 'BEARISH')
+    );
+
+  if (trendAligned && recentBosAligned) return { scoreBias: 4, priorityBias: 1 };
+  if (trendAligned || reversalSupport) return { scoreBias: 2, priorityBias: 0 };
+  return { scoreBias: -4, priorityBias: -1 };
+}
+
+function getZoneFreshnessScore(
+  zone: { type: ApproachingSignal['zoneType']; high: number; low: number; ob?: OrderBlock },
+  h4Data: StructuralData
+): { scoreBias: number; priorityBias: number } {
+  const now = Date.now();
+
+  if (zone.type === 'OB' && zone.ob) {
+    const age = now - zone.ob.timestamp;
+    if (age > MAX_ZONE_AGE_MS) return { scoreBias: -8, priorityBias: -2 };
+    if (age <= 12 * 60 * 60 * 1000) return { scoreBias: 4, priorityBias: 1 };
+    if (age <= 24 * 60 * 60 * 1000) return { scoreBias: 2, priorityBias: 1 };
+    if (age <= 48 * 60 * 60 * 1000) return { scoreBias: 0, priorityBias: 0 };
+    return { scoreBias: -3, priorityBias: -1 };
+  }
+
+  if (zone.type === 'FVG') {
+    const matched = (h4Data.fairValueGaps ?? []).find(
+      (f) => f.high === zone.high && f.low === zone.low
+    );
+    if (!matched) return { scoreBias: 0, priorityBias: 0 };
+    const age = now - matched.timestamp;
+    if (age > MAX_ZONE_AGE_MS) return { scoreBias: -8, priorityBias: -2 };
+    if (age <= 12 * 60 * 60 * 1000) return { scoreBias: 3, priorityBias: 1 };
+    if (age <= 24 * 60 * 60 * 1000) return { scoreBias: 1, priorityBias: 0 };
+    if (age <= 48 * 60 * 60 * 1000) return { scoreBias: 0, priorityBias: 0 };
+    return { scoreBias: -2, priorityBias: -1 };
+  }
+
+  if (zone.type === 'SD') {
+    const sd = [...(h4Data.supplyZones ?? []), ...(h4Data.demandZones ?? [])]
+      .find((z) => z.high === zone.high && z.low === zone.low);
+    if (!sd) return { scoreBias: 0, priorityBias: 0 };
+    if (sd.freshness === 'fresh') return { scoreBias: 3, priorityBias: 1 };
+    if (sd.freshness === 'tested' && sd.touchCount <= 2) return { scoreBias: 1, priorityBias: 0 };
+    if (sd.freshness === 'weakening') return { scoreBias: -2, priorityBias: -1 };
+    return { scoreBias: -5, priorityBias: -1 };
+  }
+
+  return { scoreBias: 0, priorityBias: 0 };
+}
+
+function getAdaptiveMinRr(params: {
+  regime: ApproachingSignal['regimeTag'];
+  qualityBand: ApproachingSignal['qualityBand'];
+  distance: number;
+}): number {
+  let minRr = BASE_MIN_ACTIVATION_RR;
+
+  if (params.regime === 'trend_following' && (params.qualityBand === 'A' || params.qualityBand === 'B')) {
+    minRr -= 0.1;
+  }
+  if (params.regime === 'ranging_risk' || params.regime === 'high_volatility') {
+    minRr += 0.2;
+  }
+  if (params.distance > 0.012) {
+    minRr += 0.1;
+  }
+
+  return Math.max(MIN_RR_ABSOLUTE_FLOOR, Math.round(minRr * 10) / 10);
 }

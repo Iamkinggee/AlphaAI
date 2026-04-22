@@ -11,7 +11,7 @@
 import { Router, Request, Response } from 'express';
 import { getSupabaseClient } from '../services/supabaseClient';
 import { generateAIResponse, GroqNotConfiguredError } from '../services/openaiService';
-import { requireAdmin } from '../middleware/auth';
+import { requireAuth } from '../middleware/auth';
 
 const router = Router();
 
@@ -295,7 +295,7 @@ router.get('/history', async (req: Request, res: Response) => {
  * DELETE /signals/history
  * Removes all resolved/completed signals from the database.
  */
-router.delete('/history', requireAdmin, async (_req: Request, res: Response) => {
+router.delete('/history', requireAuth, async (_req: Request, res: Response) => {
   try {
     const db = getSupabaseClient();
     const { error } = await db
@@ -304,6 +304,7 @@ router.delete('/history', requireAdmin, async (_req: Request, res: Response) => 
       .in('status', RESOLVED_STATUSES);
 
     if (error) throw error;
+    historyCache = null;
     res.json({ success: true, message: 'History cleared' });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

@@ -7,6 +7,7 @@ import { useRouter, Link } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/src/contexts/ThemeContext';
 import { useAuthStore } from '@/src/store/useAuthStore';
 
@@ -85,14 +86,17 @@ export default function SignInScreen() {
     if (!email || !password || emailErr || passErr) return;
     clearError();
     const ok = await signIn({ email, password });
-    if (ok) router.replace('/(tabs)');
+    if (ok) {
+      await AsyncStorage.setItem('@alphaai/onboarded', 'true');
+      router.replace('/(tabs)');
+    }
   };
 
   const isValid = email.length > 0 && password.length >= 8 && !emailErr && !passErr;
 
   return (
-    <KeyboardAvoidingView style={[styles.container, { backgroundColor: theme.background }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <KeyboardAvoidingView style={[styles.container, { backgroundColor: theme.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
 
         {/* Logo */}
         <Animated.View entering={FadeInDown.delay(0).duration(500)} style={styles.logoWrap}>
@@ -150,7 +154,10 @@ export default function SignInScreen() {
               clearError();
               const ok = await signInWithGoogle();
               setGoogleLoading(false);
-              if (ok) router.replace('/(tabs)');
+              if (ok) {
+                await AsyncStorage.setItem('@alphaai/onboarded', 'true');
+                router.replace('/(tabs)');
+              }
             }}
             disabled={googleLoading}
             style={[styles.googleBtn, { backgroundColor: theme.card, borderColor: theme.border }]}

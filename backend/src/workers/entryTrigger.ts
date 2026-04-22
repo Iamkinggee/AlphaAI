@@ -42,7 +42,7 @@ export async function runEntryTrigger(
   signal:        ApproachingSignal,
   recentCandles: Candle5M[]
 ): Promise<ActiveSignal | null> {
-  if (recentCandles.length < 20) return null;
+  if (recentCandles.length < 30) return null;
 
   const latest = recentCandles[recentCandles.length - 1];
   const signalAny = signal as ApproachingSignal & {
@@ -70,6 +70,15 @@ export async function runEntryTrigger(
   }
 
   // ── 3. SMC Micro-Structure Confirmation ───────────────────────────
+  const closeStrength = getCloseStrength(latest);
+  const minCloseStrength = signal.direction === 'LONG' ? 0.6 : 0.4;
+  if (
+    (signal.direction === 'LONG' && closeStrength < minCloseStrength) ||
+    (signal.direction === 'SHORT' && closeStrength > minCloseStrength)
+  ) {
+    return null;
+  }
+
   const confirmation = detect5MConfirmation(recentCandles, signal.direction, signal.entryZone);
   if (!confirmation) return null; // No valid SMC pattern — silent reject
 
@@ -116,7 +125,7 @@ function detect5MConfirmation(
 
   // ── A. 5M BOS (Highest Weight — +15) ──────────────────────────────
   // Latest 5M candle closed beyond the most recent confirmed 5M swing.
-  const swings = detectRecent5MSwings(candles.slice(-10, -1));
+  const swings = detectRecent5MSwings(candles.slice(-20, -1));
   if (direction === 'LONG' && swings.high !== null && latest.close > swings.high) {
     return { type: '5M_BOS', bonus: 15 };
   }
@@ -126,7 +135,7 @@ function detect5MConfirmation(
 
   // ── B. 5M FVG Fill (+12) ───────────────────────────────────────────
   // Price filled a same-direction imbalance created in the last 5 candles.
-  const recentFVG = detect5MFVG(candles.slice(-6, -1));
+  const recentFVG = detect5MFVG(candles.slice(-12, -1));
   if (recentFVG && recentFVG.direction === direction) {
     const insideFVG = latest.close >= recentFVG.low && latest.close <= recentFVG.high;
     if (insideFVG) return { type: 'fvg_fill', bonus: 12 };
@@ -135,11 +144,12 @@ function detect5MConfirmation(
   // ── C. Bullish / Bearish Engulfing (+10) ───────────────────────────
   const body     = Math.abs(latest.close - latest.open);
   const prevBody = Math.abs(prev.close - prev.open);
+  const bodyVsRange = (latest.high - latest.low) > 0 ? body / (latest.high - latest.low) : 0;
 
-  if (direction === 'LONG' && isBullishCandle && body > prevBody && latest.close > prev.high) {
+  if (direction === 'LONG' && isBullishCandle && body > prevBody && bodyVsRange >= 0.45 && latest.close > prev.high) {
     return { type: 'engulfing', bonus: 10 };
   }
-  if (direction === 'SHORT' && !isBullishCandle && body > prevBody && latest.close < prev.low) {
+  if (direction === 'SHORT' && !isBullishCandle && body > prevBody && bodyVsRange >= 0.45 && latest.close < prev.low) {
     return { type: 'engulfing', bonus: 10 };
   }
 
@@ -183,6 +193,12 @@ function detectRecent5MSwings(
     }
   }
   return { high, low };
+}
+
+function getCloseStrength(candle: Candle5M): number {
+  const range = candle.high - candle.low;
+  if (range <= 0) return 0.5;
+  return (candle.close - candle.low) / range;
 }
 
 function detect5MFVG(

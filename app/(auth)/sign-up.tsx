@@ -119,9 +119,9 @@ export default function SignUpScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={[styles.container, { backgroundColor: theme.background }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={[styles.container, { backgroundColor: theme.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24 }]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -195,7 +195,10 @@ export default function SignUpScreen() {
               if (clearError) clearError();
               const ok = await signInWithGoogle();
               setGoogleLoading(false);
-              if (ok) router.replace('/(tabs)');
+              if (ok) {
+                await AsyncStorage.setItem('@alphaai/onboarded', 'true');
+                router.replace('/(tabs)');
+              }
             }}
             disabled={googleLoading}
             style={[styles.googleBtn, { backgroundColor: theme.card, borderColor: theme.border }]}
