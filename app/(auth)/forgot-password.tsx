@@ -5,6 +5,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Colors } from '@/src/constants/colors';
 import { Fonts, FontSizes } from '@/src/constants/fonts';
 import { Spacing, BorderRadius } from '@/src/constants/spacing';
+import { apiClient } from '@/src/services/apiClient';
+import { API } from '@/src/constants/api';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -27,10 +29,14 @@ export default function ForgotPasswordScreen() {
   const handleReset = async () => {
     if (!email || emailError) return;
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      await apiClient.post(API.AUTH.FORGOT_PASSWORD, { email });
+    } catch {
+      // Always show success to prevent email enumeration
+    } finally {
       setIsLoading(false);
       setIsSent(true);
-    }, 1000);
+    }
   };
 
   return (

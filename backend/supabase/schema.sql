@@ -138,28 +138,33 @@ ALTER TABLE public.watchlist ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "watchlist_own" ON public.watchlist;
 CREATE POLICY "watchlist_own" ON public.watchlist FOR ALL USING (auth.uid() = user_id);
 
+-- Profiles table — matches live schema (001_users.sql migration)
 CREATE TABLE IF NOT EXISTS public.profiles (
   id           UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  display_name TEXT,
+  email        TEXT UNIQUE NOT NULL,
+  username     TEXT UNIQUE,
   avatar_url   TEXT,
-  tier         TEXT NOT NULL DEFAULT 'free' CHECK (tier IN ('free','pro','institutional')),
-  risk_pct     NUMERIC(5,2) DEFAULT 1.0,
-  min_score    INTEGER DEFAULT 70,
-  theme        TEXT DEFAULT 'dark',
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  tier         TEXT DEFAULT 'free',
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "profiles_own" ON public.profiles;
 CREATE POLICY "profiles_own" ON public.profiles FOR ALL USING (auth.uid() = id);
 
+-- Trigger: auto-create profile row when a new auth user is created
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, display_name, avatar_url)
+  INSERT INTO public.profiles (id, email, username, avatar_url)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email),
+    NEW.email,
+    COALESCE(
+      NEW.raw_user_meta_data->>'full_name',
+      NEW.raw_user_meta_data->>'displayName',
+      split_part(NEW.email, '@', 1)
+    ),
     NEW.raw_user_meta_data->>'avatar_url'
   ) ON CONFLICT (id) DO NOTHING;
   RETURN NEW;

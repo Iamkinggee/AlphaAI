@@ -65,9 +65,16 @@ function createMockSupabase(): SupabaseClient {
   return {
     from: () => createQuery(),
     auth: {
-      signInWithPassword: async () => ({ data: null, error: new Error('Mock Supabase') }),
-      signUp: async () => ({ data: null, error: new Error('Mock Supabase') }),
-      admin: { getUserById: async () => ({ data: null, error: null }) },
+      signInWithPassword: async () => ({ data: null, error: new Error('Mock Supabase — no credentials configured') }),
+      signUp: async () => ({ data: null, error: new Error('Mock Supabase — no credentials configured') }),
+      signOut: async () => ({ error: null }),
+      getUser: async () => ({ data: { user: null }, error: new Error('Mock Supabase — no credentials configured') }),
+      refreshSession: async () => ({ data: null, error: new Error('Mock Supabase — no credentials configured') }),
+      resetPasswordForEmail: async () => ({ data: null, error: new Error('Mock Supabase — no credentials configured') }),
+      admin: {
+        getUserById: async () => ({ data: null, error: null }),
+        createUser: async () => ({ data: { user: null }, error: new Error('Mock Supabase — no credentials configured') }),
+      },
     },
   } as unknown as SupabaseClient;
 }

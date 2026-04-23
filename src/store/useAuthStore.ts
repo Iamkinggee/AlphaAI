@@ -111,7 +111,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
           const res = await apiClient.get<{ success: boolean; data: User }>(
             API.AUTH.ME,
-            // @ts-ignore — apiClient accepts signal via options if configured
             { signal: controller.signal }
           ).finally(() => clearTimeout(timeout));
           if (res.data) {
@@ -145,9 +144,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   signIn: async ({ email, password }: SignInPayload): Promise<boolean> => {
     set({ isLoading: true, error: null });
-    // #region agent log
-    fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn start',data:{emailDomain:email.split('@')[1] ?? null,isDev:__DEV__},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
     try {
       // Race against a 10-second timeout — Supabase auth can be slow but 8s+ is unacceptable
       const signInPromise = apiClient.post<{
@@ -162,9 +158,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       const res = await Promise.race([signInPromise, timeoutPromise]);
 
       if (!res.success || !res.data) {
-        // #region agent log
-        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn response not successful',data:{success:res.success,hasData:!!res.data},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
         set({ isLoading: false, error: 'Invalid credentials.' });
         return false;
       }
@@ -174,14 +167,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       await SecureStore.setItemAsync('alphaai_user_email', email);
       await SecureStore.setItemAsync('alphaai_user_name', res.data.user.displayName ?? '');
       set({ user: res.data.user, status: 'authenticated', isLoading: false });
-      // #region agent log
-      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn success',data:{hasAccessToken:!!res.data.accessToken,userId:res.data.user?.id ?? null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
+      console.log('[AuthStore] Sign-in success:', res.data.user?.id ?? 'unknown');
       return true;
     } catch (err) {
-      // #region agent log
-      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H2',location:'src/store/useAuthStore.ts:signIn',message:'signIn caught error',data:{errorMessage:err instanceof Error ? err.message : String(err)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
+      console.warn('[AuthStore] Sign-in error:', err instanceof Error ? err.message : String(err));
       // In dev mode, allow sign-in when backend is unreachable
       if (__DEV__ && email && password) {
         console.log('[AuthStore] Dev mode — backend unavailable, creating local session');
@@ -200,31 +189,63 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   signUp: async ({ email, password, displayName }: SignUpPayload): Promise<boolean> => {
     set({ isLoading: true, error: null });
     try {
-      const res = await apiClient.post<{ success: boolean; data: { userId: string } }>(
-        API.AUTH.SIGN_UP, { email, password, displayName }
-      );
-      if (!res.success) {
+      const res = await apiClient.post<{
+        success: boolean;
+        data: {
+          userId: string;
+          email: string;
+          requiresSignIn?: boolean;
+          accessToken?: string;
+          refreshToken?: string;
+          expiresAt?: number;
+          user?: User;
+        };
+      }>(API.AUTH.SIGN_UP, { email, password, displayName });
+
+      if (!res.success || !res.data) {
         set({ isLoading: false, error: 'Sign up failed. Please try again.' });
         return false;
       }
-      // After successful registration, sign in to get tokens
-      try {
-        const signInRes = await apiClient.post<{
-          success: boolean;
-          data: { accessToken: string; refreshToken: string; user: User };
-        }>(API.AUTH.SIGN_IN, { email, password });
-        if (signInRes.success && signInRes.data) {
-          await SecureStore.setItemAsync(STORAGE_KEY_ACCESS, signInRes.data.accessToken);
-          await SecureStore.setItemAsync(STORAGE_KEY_REFRESH, signInRes.data.refreshToken);
-          await SecureStore.setItemAsync('alphaai_user_email', email);
-          await SecureStore.setItemAsync('alphaai_user_name', signInRes.data.user.displayName ?? '');
-          set({ user: signInRes.data.user, status: 'authenticated', isLoading: false });
-          return true;
+
+      // Backend now returns tokens directly from sign-up — go straight to dashboard
+      if (res.data.accessToken && res.data.user) {
+        await SecureStore.setItemAsync(STORAGE_KEY_ACCESS, res.data.accessToken);
+        if (res.data.refreshToken) {
+          await SecureStore.setItemAsync(STORAGE_KEY_REFRESH, res.data.refreshToken);
         }
-      } catch { /* fall through */ }
-      set({ isLoading: false, error: 'Account created! Please sign in.' });
+        await SecureStore.setItemAsync('alphaai_user_email', email);
+        await SecureStore.setItemAsync('alphaai_user_name', res.data.user.displayName ?? displayName ?? '');
+        set({ user: res.data.user, status: 'authenticated', isLoading: false });
+        console.log('[AuthStore] Sign-up + auto sign-in success:', res.data.user.id);
+        return true;
+      }
+
+      // Partial success: account created but auto-sign-in failed — try sign-in manually
+      if (res.data.requiresSignIn) {
+        console.log('[AuthStore] Sign-up OK, attempting manual sign-in...');
+        try {
+          const signInRes = await apiClient.post<{
+            success: boolean;
+            data: { accessToken: string; refreshToken: string; user: User };
+          }>(API.AUTH.SIGN_IN, { email, password });
+          if (signInRes.success && signInRes.data) {
+            await SecureStore.setItemAsync(STORAGE_KEY_ACCESS, signInRes.data.accessToken);
+            await SecureStore.setItemAsync(STORAGE_KEY_REFRESH, signInRes.data.refreshToken);
+            await SecureStore.setItemAsync('alphaai_user_email', email);
+            await SecureStore.setItemAsync('alphaai_user_name', signInRes.data.user.displayName ?? '');
+            set({ user: signInRes.data.user, status: 'authenticated', isLoading: false });
+            return true;
+          }
+        } catch { /* fall through */ }
+        // Account was created — redirect to sign-in screen
+        set({ isLoading: false, error: 'Account created! Please sign in.' });
+        return false;
+      }
+
+      set({ isLoading: false, error: 'Sign up failed. Please try again.' });
       return false;
-    } catch {
+    } catch (err) {
+      console.warn('[AuthStore] Sign-up error:', err instanceof Error ? err.message : String(err));
       // In dev mode, allow sign-up when backend is unreachable
       if (__DEV__ && email && password) {
         console.log('[AuthStore] Dev mode — backend unavailable, creating local account');
@@ -235,10 +256,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         set({ user, status: 'authenticated', isLoading: false });
         return true;
       }
-      set({ isLoading: false, error: 'Sign up failed. Please check your connection.' });
+      const msg = readableAuthError(err);
+      set({ isLoading: false, error: msg });
       return false;
     }
   },
+
 
   /**
    * Google Sign-In via Supabase OAuth + expo-web-browser.
@@ -255,13 +278,11 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
    */
   signInWithGoogle: async (): Promise<boolean> => {
     set({ isLoading: true, error: null });
-    // #region agent log
-    fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H1',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google sign-in start',data:{isDev:__DEV__},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
 
     try {
       // Build the redirect URI using the app's registered scheme
       const redirectUri = Linking.createURL('/auth/callback');
+      console.log('[AuthStore] Google OAuth redirectUri:', redirectUri);
 
       // ── Step 1: Get the Supabase Google OAuth URL from backend ──────
       let oauthUrl: string | null = null;
@@ -277,9 +298,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
 
       if (!oauthUrl) {
-        // #region agent log
-        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H4',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google oauth url unavailable',data:{oauthUrl:null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
         // Backend unreachable or Google not configured — dev fallback
         if (__DEV__) {
           console.log('[AuthStore] Dev mode — Google OAuth unavailable, using dev session');
@@ -305,9 +323,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
       // ── Step 2: Open OAuth URL in browser ───────────────────────────
       const result = await WebBrowser.openAuthSessionAsync(oauthUrl, redirectUri);
-      // #region agent log
-      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H4',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google auth session result',data:{type:result.type,hasUrl:!!(result as any).url},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
+      console.log('[AuthStore] Google auth session result:', result.type);
 
       if (result.type === 'cancel' || result.type === 'dismiss') {
         set({ isLoading: false, error: null }); // silent — user cancelled
@@ -335,9 +351,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         const message = errorDesc
           ? decodeURIComponent(errorDesc.replace(/\+/g, ' '))
           : errorCode ?? 'No access token received.';
-        // #region agent log
-        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H1',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google callback missing access token',data:{errorCode:params.get('error') ?? null,errorDescription:params.get('error_description') ?? null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
+        console.warn('[AuthStore] Google callback missing access token:', { errorCode, errorDesc });
         set({ isLoading: false, error: `Google Sign-In failed: ${message}` });
         return false;
       }
@@ -354,9 +368,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         await SecureStore.setItemAsync('alphaai_user_email', profileRes.data.email ?? '');
         await SecureStore.setItemAsync('alphaai_user_name', profileRes.data.displayName ?? '');
         set({ user: profileRes.data, status: 'authenticated', isLoading: false });
-        // #region agent log
-        fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H3',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google sign-in success',data:{userId:profileRes.data.id ?? null,emailDomain:profileRes.data.email?.split('@')[1] ?? null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
+        console.log('[AuthStore] Google sign-in success:', profileRes.data.id);
         return true;
       }
 
@@ -365,9 +377,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
     } catch (err) {
       console.error('[AuthStore] Google Sign-In error:', err);
-      // #region agent log
-      fetch('http://127.0.0.1:7492/ingest/ab6bd97f-a660-4e32-856c-28f4fb4f56e2',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'01c768'},body:JSON.stringify({sessionId:'01c768',runId:'auth-debug-1',hypothesisId:'H1',location:'src/store/useAuthStore.ts:signInWithGoogle',message:'google sign-in caught error',data:{errorMessage:err instanceof Error ? err.message : String(err)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
       set({ isLoading: false, error: `Google Sign-In failed: ${readableAuthError(err)}` });
       return false;
     }

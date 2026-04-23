@@ -71,6 +71,7 @@ export default function SignUpScreen() {
   const signUp          = useAuthStore((s) => s.signUp);
   const signInWithGoogle = useAuthStore((s) => s.signInWithGoogle);
   const clearError      = useAuthStore((s) => s.clearError);
+  const authError       = useAuthStore((s) => s.error);
 
   const onEmail = (t: string) => {
     setEmail(t);
@@ -104,6 +105,7 @@ export default function SignUpScreen() {
 
   const handleSignUp = async () => {
     if (!isValid || loading) return;
+    clearError();
     setLoading(true);
     try {
       const ok = await signUp({ email, password, displayName: `${firstName} ${lastName}`.trim() });
@@ -164,6 +166,14 @@ export default function SignUpScreen() {
               <Text style={[styles.strengthLabel, { color: strengthColor, fontFamily: 'Inter-Medium' }]}>{strengthLabel}</Text>
             </View>
           )}
+
+          {/* Auth error banner */}
+          {authError ? (
+            <View style={[styles.authError, { backgroundColor: '#2a0a0a', borderColor: theme.bearish + '40' }]}>
+              <Ionicons name="alert-circle-outline" size={14} color={theme.bearish} />
+              <Text style={[styles.authErrorText, { color: theme.bearish, fontFamily: 'Inter-Regular' }]}>{authError}</Text>
+            </View>
+          ) : null}
 
           {/* CTA */}
           <Pressable
@@ -246,6 +256,8 @@ const styles = StyleSheet.create({
   strengthLabel:{ fontSize: 14, minWidth: 40, textAlign: 'right' },
   cta:          { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: 14, marginTop: 4 },
   ctaText:      { fontSize: 18, color: '#000' },
+  authError:    { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 10, borderWidth: 1, padding: 12 },
+  authErrorText:{ flex: 1, fontSize: 14 },
   orRow:        { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   divider:      { flex: 1, height: 1 },
   orText:       { fontSize: 15 },

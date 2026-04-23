@@ -88,11 +88,11 @@ async function request<T>(
 }
 
 export const apiClient = {
-  get: async <T>(endpoint: string): Promise<T> => {
+  get: async <T>(endpoint: string, options?: RequestInit): Promise<T> => {
     let lastErr: unknown;
     for (let attempt = 0; attempt <= GET_RETRY_ATTEMPTS; attempt++) {
       try {
-        return await request<T>(endpoint, { method: 'GET' });
+        return await request<T>(endpoint, { method: 'GET', ...options });
       } catch (err) {
         lastErr = err;
         const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
@@ -105,6 +105,7 @@ export const apiClient = {
     }
     throw lastErr instanceof Error ? lastErr : new Error('GET request failed');
   },
+
 
   post: <T>(endpoint: string, body?: unknown): Promise<T> =>
     request<T>(endpoint, {

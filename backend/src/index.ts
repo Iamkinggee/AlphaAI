@@ -131,7 +131,7 @@ const start = () => {
 
   console.log('🏁 [Startup] Waiting for Redis...');
   // Wait for Redis before starting pipeline
-  import('./cache/redisClient.js').then(m => {
+  import('./cache/redisClient').then(m => {
     console.log('🏁 [Startup] Redis module loaded, calling waitForRedis()...');
     return m.waitForRedis();
   }).then(() => {
